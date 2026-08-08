@@ -7,6 +7,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | Datei | Name | Idee |
 |---|---|---|
 | `Strategies/OpeningPullback2R.cs` | OpeningPullback2R | Opening-Bias aus den ersten 5 1-Min-Kerzen vs. 9:00-Open, Einstieg auf ersten Pullback, Stop an Fensterstruktur, Ziel = 2R |
+| `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf einen Pullback |
 
 ---
 
@@ -45,6 +46,26 @@ Instrument-Ziel: **FDXS 09-26** (Micro-DAX, Eurex). 1-Minuten-Kerzen.
 | `StrictFirstPullback` | true | s. o. |
 
 > **Achtung Zeitzone:** Die 9:00-Logik greift auf die in NinjaTrader eingestellte Zeitzone zu. Prüfen unter **Tools → Options → General → Time zone** → muss `(UTC+01:00) Amsterdam, Berlin, …` sein.
+
+---
+
+## OpeningImmediate2R — Variante 2 (Sofort-Einstieg)
+
+Identisch zu OpeningPullback2R bis auf den Einstieg: **kein Warten auf eine Pullback-Kerze.** Der Markteinstieg erfolgt direkt nach dem Richtungsentscheid.
+
+**Timing-Detail:** Die 5. Kerze schließt um 09:05:00 — der „sofortige" Einstieg füllt daher um **09:05:00** (Open der Folgeminute), nicht 09:06. Wer den Fill exakt um 09:06:00 will, setzt `EntryDelayBars = 1` (dann wird eine Kerze — egal welcher Farbe — abgewartet).
+
+Stop- und Ziel-Logik unverändert: Stop an der Fensterstruktur (tiefster roter Close − Offset bzw. höchster grüner Close + Offset), Take-Profit = Einstieg ± 2R auf Basis des tatsächlichen Fills.
+
+**Zusätzliche/entfallene Parameter gegenüber Variante 1:**
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `EntryDelayBars` | 0 | 0 = Order beim Schluss der 5. Kerze (Fill 09:05:00) · 1 = eine Kerze später (Fill 09:06:00) |
+| ~~`CutoffHour/Minute`~~ | — | entfällt (Einstieg ist deterministisch, kein Warten) |
+| ~~`StrictFirstPullback`~~ | — | entfällt (kein Pullback-Konzept) |
+
+Randfall: Schließt die 5. Kerze bereits auf/jenseits des berechneten Stops (R ≤ 0), findet kein Trade statt.
 
 ---
 
