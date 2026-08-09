@@ -180,6 +180,14 @@ Konkret bei C = 26280, L = 26260, O = 2: R = 22 Punkte. Variante 3 hat Stop 2625
 
 > Das gilt exakt nur bei `RewardMultiple = 1`, weil Stop und Ziel dann gleich weit entfernt sind. Stellst du auf 2R um, bleibt der Stop bei 1R stehen und die Spiegelung ist keine saubere Umkehr mehr.
 
+**⚠️ Wichtig für die Auswertung — Netto-P&L ist NICHT die exakte Umkehr:** Brutto (vor Kosten) heben sich beide Varianten trade-für-trade exakt auf — die Summe ihrer Brutto-P&L über alle Tage ist zwingend null. Kommission und Slippage werden dabei aber nicht mitgespiegelt, sondern fallen bei beiden Richtungen gleich an:
+
+```
+V4_netto = −V3_netto − 2 × Gesamtkosten
+```
+
+Verliert Variante 3 also netto 500 € (davon 50 € Kosten), gewinnt Variante 4 nicht netto 500 €, sondern nur **400 €** — die eigenen 50 € Kosten werden nochmal fällig. Sind beide Varianten in eurem Backtest leicht negativ, ist das also kein Widerspruch, sondern bei engen Stops und viel Volumen der Normalfall: Erst wenn eine Seite um deutlich mehr als 2×Gesamtkosten verliert, steckt darin echte Richtungsinformation statt nur Transaktionskosten.
+
 **Struktureller Modus (`UseStructuralStop = true`)** — der Stop sitzt am Swing-Extrem der Gegenseite (beim Short also über dem Swing-High). Handelstechnisch die sinnvollere Platzierung, aber R und damit die Positionsgröße weichen von Variante 3 ab, es ist also kein exakter Umkehrtest mehr, sondern eine eigenständige Strategie.
 
 ### Was das Ergebnis bedeutet
