@@ -104,11 +104,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 				RiskPerTrade         = 100;
 				MaxContracts         = 50;
 				Contracts            = 1;
+				EnableDebugLog       = true;
 			}
 			else if (State == State.DataLoaded)
 			{
 				if (BarsPeriod.BarsPeriodType != BarsPeriodType.Minute || BarsPeriod.Value != 1)
 					Log(Name + ": Bitte eine 1-Minuten-Datenserie verwenden (aktuell: " + BarsPeriod + "). Die Logik setzt 1-Min-Kerzen voraus.", LogLevel.Warning);
+
+				if (UseFixedRisk && Instrument.MasterInstrument.PointValue <= 0)
+					Log(Name + ": PointValue des Instruments ist " + Instrument.MasterInstrument.PointValue + " (<= 0). Bei 'Festes Geldrisiko je Trade' = True werden dadurch ALLE Trades mit Kontraktzahl 0 uebersprungen. Point Value in Control Center -> Tools -> Instruments fuer " + Instrument.FullName + " pruefen/setzen (FDXS = 1).", LogLevel.Error);
+
+				if (EnableDebugLog)
+					Print(Name + ": Start — Instrument=" + Instrument.FullName + ", PointValue=" + Instrument.MasterInstrument.PointValue + ", TickSize=" + Instrument.MasterInstrument.TickSize + ", UseFixedRisk=" + UseFixedRisk + ", RiskPerTrade=" + RiskPerTrade);
 			}
 		}
 
@@ -216,42 +223,74 @@ namespace NinjaTrader.NinjaScript.Strategies
 				double basis = UseWindowExtremeStop ? lowestRedClose : lastRedClose;
 				if (basis == double.MaxValue)
 					basis = AllowFallbackStop ? lowestCloseAll : double.MaxValue;
-				if (basis == double.MaxValue) { entryDone = true; return; } // keine Stop-Basis vorhanden
+				if (basis == double.MaxValue)
+				{
+					entryDone = true;
+					if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: kein Trade — keine Stop-Basis gefunden (AllowFallbackStop=" + AllowFallbackStop + ")");
+					return;
+				}
 
 				stopPrice   = Instrument.MasterInstrument.RoundToTickSize(basis - StopOffsetTicks * TickSize);
 				double risk = Close[0] - stopPrice;
 
-				if (risk < Math.Max(1, MinRiskTicks) * TickSize) { entryDone = true; return; } // zu klein / unter Mindest-R
+				if (risk < Math.Max(1, MinRiskTicks) * TickSize)
+				{
+					entryDone = true;
+					if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: kein Trade — Risiko zu klein (R=" + risk + ", Close=" + Close[0] + ", Stop=" + stopPrice + ")");
+					return;
+				}
 
 				int qtyLong = CalcQuantity(risk);
-				if (qtyLong < 1) { entryDone = true; return; } // R zu gross fuer das Geldrisiko
+				if (qtyLong < 1)
+				{
+					entryDone = true;
+					if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: kein Trade — Kontraktzahl=0 (R=" + risk + " Punkte, RiskPerTrade=" + RiskPerTrade + ", PointValue=" + Instrument.MasterInstrument.PointValue + ", UseFixedRisk=" + UseFixedRisk + ")");
+					return;
+				}
 
 				SetStopLoss(SignalLong, CalculationMode.Price, stopPrice, false);
 				SetProfitTarget(SignalLong, CalculationMode.Price,
 					Instrument.MasterInstrument.RoundToTickSize(Close[0] + RewardMultiple * risk));
 				EnterLong(qtyLong, SignalLong);
 				entryDone = true;
+				if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: LONG Entry " + qtyLong + " @ " + Close[0] + " | Stop=" + stopPrice);
 			}
 			else if (bias == -1)
 			{
 				double basis = UseWindowExtremeStop ? highestGreenClose : lastGreenClose;
 				if (basis == double.MinValue)
 					basis = AllowFallbackStop ? highestCloseAll : double.MinValue;
-				if (basis == double.MinValue) { entryDone = true; return; }
+				if (basis == double.MinValue)
+				{
+					entryDone = true;
+					if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: kein Trade — keine Stop-Basis gefunden (AllowFallbackStop=" + AllowFallbackStop + ")");
+					return;
+				}
 
 				stopPrice   = Instrument.MasterInstrument.RoundToTickSize(basis + StopOffsetTicks * TickSize);
 				double risk = stopPrice - Close[0];
 
-				if (risk < Math.Max(1, MinRiskTicks) * TickSize) { entryDone = true; return; }
+				if (risk < Math.Max(1, MinRiskTicks) * TickSize)
+				{
+					entryDone = true;
+					if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: kein Trade — Risiko zu klein (R=" + risk + ", Close=" + Close[0] + ", Stop=" + stopPrice + ")");
+					return;
+				}
 
 				int qtyShort = CalcQuantity(risk);
-				if (qtyShort < 1) { entryDone = true; return; }
+				if (qtyShort < 1)
+				{
+					entryDone = true;
+					if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: kein Trade — Kontraktzahl=0 (R=" + risk + " Punkte, RiskPerTrade=" + RiskPerTrade + ", PointValue=" + Instrument.MasterInstrument.PointValue + ", UseFixedRisk=" + UseFixedRisk + ")");
+					return;
+				}
 
 				SetStopLoss(SignalShort, CalculationMode.Price, stopPrice, false);
 				SetProfitTarget(SignalShort, CalculationMode.Price,
 					Instrument.MasterInstrument.RoundToTickSize(Close[0] - RewardMultiple * risk));
 				EnterShort(qtyShort, SignalShort);
 				entryDone = true;
+				if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: SHORT Entry " + qtyShort + " @ " + Close[0] + " | Stop=" + stopPrice);
 			}
 		}
 
@@ -260,13 +299,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 			biasDecided = true;
 
 			if (windowBarCount == 0 || openPrice == 0)
+			{
 				entryDone = true;                    // keine Daten im Fenster -> kein Trade
+				if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: kein Trade — Fenster ohne Daten (windowBarCount=" + windowBarCount + ", openPrice=" + openPrice + ")");
+			}
 			else if (lastWindowClose > openPrice)
 				bias = 1;
 			else if (lastWindowClose < openPrice)
 				bias = -1;
 			else
+			{
 				entryDone = true;                    // exakt auf dem Open -> kein Trade
+				if (EnableDebugLog) Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: kein Trade — Close 5. Kerze exakt auf 9:00-Open (" + openPrice + ")");
+			}
+
+			if (EnableDebugLog && bias != 0)
+				Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " OI2R: Bias=" + (bias == 1 ? "LONG" : "SHORT") + " (Open=" + openPrice + ", Close 5. Kerze=" + lastWindowClose + ")");
 		}
 
 		// Ziel exakt auf Basis des tatsaechlichen Fills nachjustieren:
@@ -357,6 +405,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Fallback-Stop erlauben", Description = "Keine Gegenkerze im Fenster vorhanden: tiefsten/hoechsten Close aller Fensterkerzen als Stop-Basis nutzen. Sonst kein Trade.", Order = 20, GroupName = "03 Verhalten")]
 		public bool AllowFallbackStop { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Debug-Log aktiv", Description = "Schreibt bei jedem Bias-Entscheid und jedem übersprungenen/ausgeführten Trade eine Zeile ins NinjaScript Output-Fenster. Bei Bedarf auf False stellen, um den Log sauber zu halten.", Order = 30, GroupName = "04 Diagnose")]
+		public bool EnableDebugLog { get; set; }
 		#endregion
 	}
 }

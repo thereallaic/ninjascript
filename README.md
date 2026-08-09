@@ -106,6 +106,14 @@ Stop- und Ziel-Logik identisch zu Variante 1: Stop = Close der zuletzt gesehenen
 
 Randfall: Schließt die 5. Kerze bereits auf/jenseits des berechneten Stops (R ≤ 0), findet kein Trade statt.
 
+### Wenn keine Trades ausgeführt werden
+
+`OpeningImmediate2R` hat ein **Debug-Log** (`EnableDebugLog`, Standard `true`). Öffne im NinjaTrader-Hauptfenster **New → NinjaScript Output** *bevor* du den Backtest startest — dort erscheint danach für jeden Tag eine Zeile: entweder eine ausgeführte Order oder der genaue Grund, warum sie ausgelassen wurde (kein Bias, keine Stop-Basis, R zu klein, oder Kontraktzahl 0).
+
+**Häufigste Ursache für „keine Trades bei allen Tagen": PointValue = 0.** Seit `UseFixedRisk = true` Standard ist, berechnet die Strategie die Kontraktzahl aus `RiskPerTrade / (R × PointValue)`. Ist der **Point Value des Instruments in NinjaTrader nicht hinterlegt** (0 oder leer — kommt bei frisch importierten Kontraktmonaten wie SEP26 vor), ist die Kontraktzahl für **jeden** Trade 0, und er wird stillschweigend übersprungen — bei allen vier Strategien in diesem Repo, nicht nur bei dieser. Die Log-Zeile beim Start (`PointValue=...`) und die `LogLevel.Error`-Meldung im **Log**-Tab zeigen das direkt an.
+
+**Schnelltest:** `UseFixedRisk` testweise auf `false` stellen und neu laufen lassen. Kommen dann Trades, war es exakt das — Point Value unter **Control Center → Tools → Instruments** für FDXS SEP26 auf `1` setzen (1 Punkt = 1 €) und `UseFixedRisk` wieder auf `true`.
+
 ---
 
 ## OpeningPullbackSwing1R — Variante 3 (Swing-Stop, 1R-Ziel)
