@@ -8,6 +8,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 |---|---|---|
 | `Strategies/OpeningPullback2R.cs` | OpeningPullback2R | Opening-Bias aus den ersten 5 1-Min-Kerzen vs. 9:00-Open, Einstieg auf der ersten Kerze in Bias-Richtung, Stop auf dem Close der letzten Gegenkerze, Ziel = 2R |
 | `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf eine Signalkerze |
+| `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
 
 ---
 
@@ -103,6 +104,51 @@ Stop- und Ziel-Logik identisch zu Variante 1: Stop = Close der zuletzt gesehenen
 | ~~`StrictFirstSignal`~~ | — | entfällt (kein Signalkerzen-Konzept) |
 
 Randfall: Schließt die 5. Kerze bereits auf/jenseits des berechneten Stops (R ≤ 0), findet kein Trade statt.
+
+---
+
+## OpeningPullbackSwing1R — Variante 3 (Swing-Stop, 1R-Ziel)
+
+Einstiegslogik **identisch zu Variante 1** (Bias aus den 5 Anfangskerzen, Long auf der ersten grünen Kerze danach, Short auf der ersten roten). Zwei Unterschiede:
+
+**1. Stop unter dem geformten Swing-Extrem statt auf einem Close.** Ab dem Ende des 5er-Fensters wird das tiefste Low (Long) bzw. höchste High (Short) aller Kerzen mitgeführt — **einschließlich der Signalkerze selbst**. Der Stop liegt `StopOffsetTicks` darunter bzw. darüber.
+
+```
+Long:   Stop = tiefstes Low  des Pullbacks − Offset
+Short:  Stop = höchstes High des Pullbacks + Offset
+```
+
+Das ist die strukturell sauberere Platzierung: Der Stop sitzt unter dem Docht, nicht im Kerzenkörper. Ein Wick-Test des Pullback-Tiefs stoppt dich damit nicht mehr aus.
+
+**2. Take-Profit = 1R** statt 2R (`RewardMultiple = 1`).
+
+### Was das für das Profil bedeutet
+
+R ist hier **systematisch größer** als in Variante 1 — der Docht liegt naturgemäß unter dem Close. Zusammen mit dem 1R-Ziel ergibt das ein völlig anderes Profil:
+
+| | Variante 1 (Close-Stop, 2R) | Variante 3 (Swing-Stop, 1R) |
+|---|---|---|
+| R-Distanz | eng | weiter |
+| Nötige Trefferquote (vor Kosten) | > 33 % | > 50 % |
+| Stopouts durch Wick-Tests | häufig | selten |
+| Kontraktzahl bei 100 € Risiko | hoch | niedriger |
+| Kosten je Trade relativ zu R | hoch | niedriger |
+
+Genau dieser Trade-off ist der interessante Vergleich: Variante 1 braucht wenige große Gewinner, Variante 3 braucht konstante Treffer. Welche gewinnt, hängt davon ab, ob der FDXS nach dem Opening wirklich durchläuft oder eher zappelt.
+
+### Abweichende Parameter
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `RewardMultiple` | **1** | Take-Profit in R (in Variante 1: 2) |
+| `StopOffsetTicks` | 2 | Puffer unter dem Swing-Low / über dem Swing-High |
+| `IncludeWindowInSwing` | false | false = nur Kerzen **nach** dem 5er-Fenster bilden den Swing · true = die 5 Anfangskerzen zählen mit (deutlich weitere Stops, wenn die 9:00-Kerze einen langen Docht hat — genau das Problem, das Variante 1 ursprünglich hatte) |
+| ~~`UseWindowExtremeStop`~~ | — | entfällt, durch `IncludeWindowInSwing` ersetzt |
+| ~~`AllowFallbackStop`~~ | — | entfällt (ein Low/High existiert immer, kein Fallback nötig) |
+
+Alle übrigen Parameter (Zeiten, `UseFixedRisk`, `RiskPerTrade`, `MaxContracts`, `MinRiskTicks`, `StrictFirstSignal`) verhalten sich wie in Variante 1.
+
+> Die Warnung zu Mini-Stops aus Variante 1 gilt hier deutlich schwächer — durch den Docht-Abstand fällt R selten unter ~5 Punkte. `MinRiskTicks` kann meist auf 0 bleiben.
 
 ---
 
