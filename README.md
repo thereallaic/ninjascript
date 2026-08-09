@@ -10,6 +10,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf eine Signalkerze |
 | `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
 | `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
+| `Strategies/VolumeSpikeLong1R.cs` | VolumeSpikeLong1R | Eigenständiger Ansatz: Long-only 10:00–15:00, Einstieg auf grüner Kerze mit 1,5-fachem Volumen, festes Geldrisiko, 1R-Ziel |
 
 ---
 
@@ -205,6 +206,54 @@ Verliert Variante 3 also netto 500 € (davon 50 € Kosten), gewinnt Variante 4
 - **Beide etwa bei null** → Rauschen, mehr Handelstage nötig.
 
 Alle Parameter entsprechen Variante 3, zusätzlich nur `UseStructuralStop`.
+
+---
+
+## VolumeSpikeLong1R — Volumen-Ausbruch (eigenständiger Ansatz)
+
+Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch nach oben zeigt Käuferinteresse und läuft weiter.**
+
+1. **Handelsfenster:** 10:00–15:00. Außerhalb passiert nichts.
+2. **Nur Long.**
+3. **Einstieg**, wenn eine Kerze beide Bedingungen erfüllt:
+   - Volumen ≥ **1,5 ×** Durchschnittsvolumen der letzten 20 Kerzen
+   - **Grüne** Kerze (Close > Open)
+4. **Risiko/Ziel:** Stop und Ziel liegen so, dass Verlust bzw. Gewinn genau **100 €** betragen.
+5. Immer nur **eine Position gleichzeitig** — Signale während einer offenen Position werden ignoriert.
+6. Offene Position wird um **15:00 glattgestellt**.
+
+### Wie das feste Geldrisiko hier funktioniert
+
+Anders als bei den Opening-Varianten ist hier die **Kontraktzahl fix** (1) und stattdessen die **Stopdistanz** variabel:
+
+```
+Stopdistanz = RiskAmount / (PointValue × Kontrakte)
+```
+
+Bei FDXS (1 Punkt = 1 €) und 1 Kontrakt sind das **100 Punkte Stop und 100 Punkte Ziel**. Nach dem Fill werden beide Level auf den tatsächlichen Einstiegskurs nachgerechnet, damit das Risiko exakt 100 € bleibt.
+
+> **⚠️ 100 Punkte sind beim DAX viel.** Bei Kursen um 26.000 entspricht das rund 0,4 %; die typische Tagesrange liegt bei 200–400 Punkten. Rechne damit, dass viele Trades das Ziel im Fenster bis 15:00 **nicht** erreichen und stattdessen per Zeit-Exit enden. Das erzeugt **drei** Ausgänge statt zwei: +1R, −1R und „Zeit-Exit irgendwo dazwischen". Wenn im Trades-Tab der Großteil auf `TimeExit` läuft, ist `RiskAmount` für dieses Zeitfenster zu groß gewählt — 30–50 € (= 30–50 Punkte) wären dann der realistischere Bereich. Alternativ `CloseAtWindowEnd = false` setzen, dann läuft die Position bis Stop oder Ziel.
+
+### Parameter
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `StartHour` / `StartMinute` | 10 / 0 | Beginn des Handelsfensters |
+| `EndHour` / `EndMinute` | 15 / 0 | Ende — danach keine neuen Einstiege |
+| `CloseAtWindowEnd` | true | Offene Position um 15:00 schließen · false = bis Stop/Ziel laufen lassen |
+| `VolumeMultiple` | 1.5 | Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch zählt |
+| `VolumeLookback` | 20 | Anzahl Kerzen für den Durchschnitt — **ohne** die aktuelle Kerze |
+| `RiskAmount` | 100 | Geldrisiko je Trade in Instrumentenwährung (EUR bei FDXS) |
+| `RewardMultiple` | 1 | Take-Profit in R |
+| `Contracts` | 1 | Feste Positionsgröße |
+| `MaxTradesPerDay` | 0 | 0 = unbegrenzt |
+| `EnableDebugLog` | false | Loggt jedes Signal mit Volumenverhältnis, jeden Fill und jeden Zeit-Exit |
+
+### Details, die das Ergebnis beeinflussen
+
+- **Der Durchschnitt schließt die Signalkerze aus** (`SMA(Volume, 20)[1]`). Sonst würde eine Volumenspitze ihren eigenen Schwellwert nach oben ziehen und das Signal systematisch abschwächen.
+- **Zeitstempel-Logik:** Die Kerze, die um 10:00 schließt, enthält noch Daten von vor 10:00 und zählt deshalb nicht zum Fenster. Erste mögliche Signalkerze schließt um 10:01.
+- **Timeframe:** Auf 1-Minuten-Kerzen ausgelegt wie die anderen Strategien, funktioniert aber auf jedem Bar-Typ — der Volumen-Durchschnitt ist relativ. Auf 5-Minuten-Kerzen ist `VolumeLookback = 20` allerdings ein deutlich längerer Zeitraum, das beim Vergleich bedenken.
 
 ---
 
