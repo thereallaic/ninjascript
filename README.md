@@ -10,7 +10,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf eine Signalkerze |
 | `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
 | `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
-| `Strategies/VolumeSpikeLong1R.cs` | VolumeSpikeLong1R | Eigenständiger Ansatz: Long-only 10:00–15:00, Einstieg auf grüner Kerze mit 1,5-fachem Volumen, festes Geldrisiko, 1R-Ziel |
+| `Strategies/VolumeSpikeLong2R.cs` | VolumeSpikeLong2R | Eigenständiger Ansatz: Long-only 10:00–15:00, Einstieg auf grüner Kerze mit 1,5-fachem Volumen, festes Geldrisiko, 2R-Ziel |
 
 ---
 
@@ -209,7 +209,7 @@ Alle Parameter entsprechen Variante 3, zusätzlich nur `UseStructuralStop`.
 
 ---
 
-## VolumeSpikeLong1R — Volumen-Ausbruch (eigenständiger Ansatz)
+## VolumeSpikeLong2R — Volumen-Ausbruch (eigenständiger Ansatz)
 
 Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch nach oben zeigt Käuferinteresse und läuft weiter.**
 
@@ -218,7 +218,7 @@ Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch nach oben ze
 3. **Einstieg**, wenn eine Kerze beide Bedingungen erfüllt:
    - Volumen ≥ **1,5 ×** Durchschnittsvolumen der letzten 20 Kerzen
    - **Grüne** Kerze (Close > Open)
-4. **Risiko/Ziel:** Stop und Ziel liegen so, dass Verlust bzw. Gewinn genau **100 €** betragen.
+4. **Risiko/Ziel:** Ein Stopout kostet genau **100 €**, das Ziel liegt bei **2R = 200 €**.
 5. Immer nur **eine Position gleichzeitig** — Signale während einer offenen Position werden ignoriert.
 6. Offene Position wird um **15:00 glattgestellt**.
 
@@ -228,11 +228,16 @@ Anders als bei den Opening-Varianten ist hier die **Kontraktzahl fix** (1) und s
 
 ```
 Stopdistanz = RiskAmount / (PointValue × Kontrakte)
+Zieldistanz = RewardMultiple × Stopdistanz
 ```
 
-Bei FDXS (1 Punkt = 1 €) und 1 Kontrakt sind das **100 Punkte Stop und 100 Punkte Ziel**. Nach dem Fill werden beide Level auf den tatsächlichen Einstiegskurs nachgerechnet, damit das Risiko exakt 100 € bleibt.
+Bei FDXS (1 Punkt = 1 €) und 1 Kontrakt sind das **100 Punkte Stop und 200 Punkte Ziel**. Nach dem Fill werden beide Level auf den tatsächlichen Einstiegskurs nachgerechnet, damit das Risiko exakt 100 € bleibt.
 
-> **⚠️ 100 Punkte sind beim DAX viel.** Bei Kursen um 26.000 entspricht das rund 0,4 %; die typische Tagesrange liegt bei 200–400 Punkten. Rechne damit, dass viele Trades das Ziel im Fenster bis 15:00 **nicht** erreichen und stattdessen per Zeit-Exit enden. Das erzeugt **drei** Ausgänge statt zwei: +1R, −1R und „Zeit-Exit irgendwo dazwischen". Wenn im Trades-Tab der Großteil auf `TimeExit` läuft, ist `RiskAmount` für dieses Zeitfenster zu groß gewählt — 30–50 € (= 30–50 Punkte) wären dann der realistischere Bereich. Alternativ `CloseAtWindowEnd = false` setzen, dann läuft die Position bis Stop oder Ziel.
+> **⚠️ 200 Punkte Zieldistanz sind beim DAX sehr viel.** Bei Kursen um 26.000 entspricht das rund 0,77 %; die typische Tagesrange liegt bei 200–400 Punkten. Innerhalb des Fensters bis 15:00 wird das Ziel deshalb **selten** erreicht, und der Zeit-Exit dürfte den Großteil der Trades beenden. Damit gibt es **drei** Ausgänge statt zwei: +2R, −1R und „Zeit-Exit irgendwo dazwischen".
+>
+> Prüfe im Trades-Tab, wie viele Trades auf `TimeExit` laufen. Ist das die Mehrheit, misst der Backtest nicht mehr dein 2R-Setup, sondern nur noch die durchschnittliche Kursbewegung bis 15:00. Zwei Auswege:
+> - **`RiskAmount` senken** auf 30–50 (= 60–100 Punkte Zieldistanz) — dann wird 2R im Fenster erreichbar.
+> - **`CloseAtWindowEnd = false`** — die Position läuft dann bis Stop oder Ziel, notfalls bis zum Sessionende. Sauberes 2R-Profil, aber die Position hängt über das Fenster hinaus im Markt.
 
 ### Parameter
 
@@ -243,8 +248,8 @@ Bei FDXS (1 Punkt = 1 €) und 1 Kontrakt sind das **100 Punkte Stop und 100 Pun
 | `CloseAtWindowEnd` | true | Offene Position um 15:00 schließen · false = bis Stop/Ziel laufen lassen |
 | `VolumeMultiple` | 1.5 | Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch zählt |
 | `VolumeLookback` | 20 | Anzahl Kerzen für den Durchschnitt — **ohne** die aktuelle Kerze |
-| `RiskAmount` | 100 | Geldrisiko je Trade in Instrumentenwährung (EUR bei FDXS) |
-| `RewardMultiple` | 1 | Take-Profit in R |
+| `RiskAmount` | 100 | Geldrisiko je Trade (1R) in Instrumentenwährung (EUR bei FDXS) |
+| `RewardMultiple` | **2** | Take-Profit in R — bei 100 € Risiko und 1 Kontrakt: 200 Punkte Zieldistanz |
 | `Contracts` | 1 | Feste Positionsgröße |
 | `MaxTradesPerDay` | 0 | 0 = unbegrenzt |
 | `EnableDebugLog` | false | Loggt jedes Signal mit Volumenverhältnis, jeden Fill und jeden Zeit-Exit |

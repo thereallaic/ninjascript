@@ -23,7 +23,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 #endregion
 
 // =====================================================================================
-// VolumeSpikeLong1R  —  Volumen-Ausbruch Long-only, NinjaTrader 8.1
+// VolumeSpikeLong2R  —  Volumen-Ausbruch Long-only, NinjaTrader 8.1
 //
 // Regelwerk:
 //  1. Handelsfenster 10:00–15:00 (lokale NT-Zeitzone). Ausserhalb passiert nichts.
@@ -35,10 +35,11 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //          eigenen Schwellwert nach oben ziehen.
 //       b) Gruene Kerze (Close > Open).
 //     Market-Order beim Schluss der Signalkerze -> Fill zum Open der Folgekerze.
-//  4. Festes Geldrisiko: Stop und Ziel liegen so, dass Verlust bzw. Gewinn genau
-//     RiskAmount (Standard 100) in Instrumentenwaehrung betragen.
+//  4. Festes Geldrisiko: Ein Stopout kostet genau RiskAmount (Standard 100) in
+//     Instrumentenwaehrung, das Ziel liegt bei RewardMultiple (Standard 2) x davon.
 //       Stopdistanz = RiskAmount / (PointValue x Kontrakte)
-//       Bei FDXS (1 Punkt = 1 EUR) und 1 Kontrakt sind das 100 Punkte.
+//       Bei FDXS (1 Punkt = 1 EUR) und 1 Kontrakt sind das 100 Punkte Stop
+//       und 200 Punkte Ziel.
 //     Stop und Ziel werden nach dem Fill auf den TATSAECHLICHEN Einstiegskurs
 //     nachgerechnet, damit das Risiko exakt stimmt.
 //  5. Immer nur eine Position gleichzeitig. Neue Signale waehrend einer offenen
@@ -46,14 +47,16 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //  6. Offene Position wird um 15:00 glattgestellt (CloseAtWindowEnd).
 //
 // Achtung zur Interpretation: Durch den Zeit-Exit gibt es DREI Ausgaenge, nicht zwei —
-// +1R, −1R und "Zeit-Exit irgendwo dazwischen". Je weiter RiskAmount, desto haeufiger
-// der dritte Fall. Die Auswertung im Trades-Tab entsprechend lesen.
+// +2R, −1R und "Zeit-Exit irgendwo dazwischen". Ein 200-Punkte-Ziel wird im Fenster
+// bis 15:00 selten erreicht, der dritte Fall duerfte daher dominieren. Wenn im
+// Trades-Tab fast alles auf TimeExit laeuft: RiskAmount senken (30-50) oder
+// CloseAtWindowEnd abschalten.
 //
 // Zeitzone: Tools > Options > General > Time zone muss auf Berlin stehen.
 // =====================================================================================
 namespace NinjaTrader.NinjaScript.Strategies
 {
-	public class VolumeSpikeLong1R : Strategy
+	public class VolumeSpikeLong2R : Strategy
 	{
 		private const string SignalLong = "VSL_Long";
 
@@ -65,8 +68,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (State == State.SetDefaults)
 			{
-				Description                     = "Long-only Volumen-Ausbruch zwischen 10:00 und 15:00: Einstieg auf einer gruenen Kerze mit dem 1,5-fachen Durchschnittsvolumen, festes Geldrisiko mit 1R-Ziel.";
-				Name                            = "VolumeSpikeLong1R";
+				Description                     = "Long-only Volumen-Ausbruch zwischen 10:00 und 15:00: Einstieg auf einer gruenen Kerze mit dem 1,5-fachen Durchschnittsvolumen, festes Geldrisiko mit 2R-Ziel.";
+				Name                            = "VolumeSpikeLong2R";
 				Calculate                       = Calculate.OnBarClose;
 				EntriesPerDirection             = 1;
 				EntryHandling                   = EntryHandling.AllEntries;
@@ -93,7 +96,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				VolumeMultiple   = 1.5;
 				VolumeLookback   = 20;
 				RiskAmount       = 100;
-				RewardMultiple   = 1;
+				RewardMultiple   = 2;
 				Contracts        = 1;
 				MaxTradesPerDay  = 0;      // 0 = unbegrenzt
 				EnableDebugLog   = false;
@@ -279,7 +282,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		[NinjaScriptProperty]
 		[Range(0.25, 10)]
-		[Display(Name = "Reward-Multiple (R)", Description = "Take-Profit = Einstieg + Multiple * R (Standard 1).", Order = 21, GroupName = "03 Risiko")]
+		[Display(Name = "Reward-Multiple (R)", Description = "Take-Profit = Einstieg + Multiple * R (Standard 2). Bei FDXS mit 100 EUR Risiko und 1 Kontrakt: 2 = 200 Punkte Zieldistanz.", Order = 21, GroupName = "03 Risiko")]
 		public double RewardMultiple { get; set; }
 
 		[NinjaScriptProperty]
