@@ -26,21 +26,26 @@ using NinjaTrader.NinjaScript.DrawingTools;
 // OpeningPullback2R  —  Opening-Strategie fuer FDXS (Micro-DAX), NinjaTrader 8.1
 //
 // Regelwerk:
-//  1. Referenzkurs = Open der 1-Minuten-Kerze um 09:00 (Xetra-Eroeffnung).
+//  1. Referenzkurs = Open der 1-Minuten-Kerze um 09:00.
 //  2. Die ersten 5 Kerzen (09:00–09:05) werden nur beobachtet.
 //     Schlusskurs der 5. Kerze > Referenz  -> Long-Bias
 //     Schlusskurs der 5. Kerze < Referenz  -> Short-Bias
-//  3. Long:  Einstieg per Market beim Schluss der ERSTEN roten Kerze nach dem Fenster
-//            (fruehester Einstieg somit 09:06:00).
-//     Short: spiegelbildlich, erste gruene Kerze.
-//  4. Stop (Long)  = tiefster Close einer ROTEN Kerze der 5 Anfangskerzen − Offset.
-//     Stop (Short) = hoechster Close einer GRUENEN Kerze der 5 Anfangskerzen + Offset.
+//  3. Long:  Einstieg per Market beim Schluss der ERSTEN GRUENEN Kerze nach dem Fenster.
+//     Short: Einstieg per Market beim Schluss der ERSTEN ROTEN  Kerze nach dem Fenster.
+//  4. Stop (Long)  = Close der ZULETZT gesehenen ROTEN   Kerze vor dem Einstieg − Offset.
+//     Stop (Short) = Close der ZULETZT gesehenen GRUENEN Kerze vor dem Einstieg + Offset.
+//     "Zuletzt gesehen" wird ab 09:00 fortlaufend mitgefuehrt, deckt also sowohl die
+//     5 Anfangskerzen als auch die Wartekerzen danach ab.
 //     R = Distanz Einstieg->Stop.  Take-Profit = Einstieg +/- RewardMultiple * R.
 //  5. Maximal 1 Trade pro Tag. Kein Einstieg mehr nach der Cutoff-Zeit.
 //
 // Wichtig: 1-Minuten-Datenserie verwenden. Zeitstempel = Schlusszeit der Kerze
 // (NT8-Standard). Der PC / NinjaTrader muss auf Zeitzone Berlin stehen, damit
-// "09:00" auch die Xetra-Eroeffnung trifft (Tools > Options > General > Time zone).
+// "09:00" auch die Eroeffnung trifft (Tools > Options > General > Time zone).
+//
+// Fill-Timing: Bei Calculate.OnBarClose wird die Market-Order beim Schluss der
+// Signalkerze abgeschickt und zum Open der Folgekerze gefuellt. Das ist korrekt und
+// realistisch — ein Fill exakt zum Schlusskurs der Signalkerze waere nicht handelbar.
 // =====================================================================================
 namespace NinjaTrader.NinjaScript.Strategies
 {
@@ -53,8 +58,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double   openPrice;          // Open der 09:00-Kerze
 		private int      windowBarCount;     // Anzahl verarbeiteter Anfangskerzen
 		private double   lastWindowClose;    // Close der letzten Kerze im Fenster
-		private double   lowestRedClose;     // tiefster Close einer roten Kerze im Fenster
-		private double   highestGreenClose;  // hoechster Close einer gruenen Kerze im Fenster
+		private double   lastRedClose;       // Close der zuletzt gesehenen ROTEN Kerze (ab 09:00)
+		private double   lastGreenClose;     // Close der zuletzt gesehenen GRUENEN Kerze (ab 09:00)
+		private double   lowestRedClose;     // optionale Alt-Basis: tiefster roter Close im Fenster
+		private double   highestGreenClose;  // optionale Alt-Basis: hoechster gruener Close im Fenster
 		private double   lowestCloseAll;     // Fallback: tiefster Close aller Fensterkerzen
 		private double   highestCloseAll;    // Fallback: hoechster Close aller Fensterkerzen
 		private int      bias;               // +1 Long, -1 Short, 0 kein Trade
@@ -66,7 +73,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (State == State.SetDefaults)
 			{
-				Description                     = "Opening-Strategie: Richtung aus den ersten 5 1-Min-Kerzen vs. 9:00-Open, Einstieg auf ersten Pullback, Stop an Fensterstruktur, Ziel = 2R.";
+				Description                     = "Opening-Strategie: Richtung aus den ersten 5 1-Min-Kerzen vs. 9:00-Open. Long-Einstieg auf der ersten gruenen Kerze danach, Stop auf dem Close der letzten roten Kerze, Ziel = 2R. Short spiegelbildlich.";
 				Name                            = "OpeningPullback2R";
 				Calculate                       = Calculate.OnBarClose;
 				EntriesPerDirection             = 1;
@@ -86,16 +93,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 				IsInstantiatedOnEachOptimizationIteration = true;
 
 				// Parameter-Defaults
-				OpenHour            = 9;
-				OpenMinute          = 0;
-				InitialBars         = 5;
-				CutoffHour          = 10;
-				CutoffMinute        = 0;
-				RewardMultiple      = 2;
-				StopOffsetTicks     = 2;
-				AllowFallbackStop   = true;
-				StrictFirstPullback = true;
-				Contracts           = 1;
+				OpenHour              = 9;
+				OpenMinute            = 0;
+				InitialBars           = 5;
+				CutoffHour            = 10;
+				CutoffMinute          = 0;
+				RewardMultiple        = 2;
+				StopOffsetTicks       = 2;
+				UseWindowExtremeStop  = false;
+				MinRiskTicks          = 0;
+				AllowFallbackStop     = true;
+				StrictFirstSignal     = false;
+				Contracts             = 1;
 			}
 			else if (State == State.DataLoaded)
 			{
@@ -110,6 +119,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 			openPrice         = 0;
 			windowBarCount    = 0;
 			lastWindowClose   = 0;
+			lastRedClose      = double.MaxValue;
+			lastGreenClose    = double.MinValue;
 			lowestRedClose    = double.MaxValue;
 			highestGreenClose = double.MinValue;
 			lowestCloseAll    = double.MaxValue;
@@ -134,6 +145,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			TimeSpan windowEnd   = windowStart + TimeSpan.FromMinutes(InitialBars);     // 09:05:00
 			TimeSpan cutoff      = new TimeSpan(CutoffHour, CutoffMinute, 0);
 
+			bool isGreen = Close[0] > Open[0];
+			bool isRed   = Close[0] < Open[0];
+
 			// ---------- Phase 1: Beobachtungsfenster (Kerzen 1..InitialBars) ----------
 			if (barClose > windowStart && barClose <= windowEnd)
 			{
@@ -143,10 +157,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 				windowBarCount++;
 				lastWindowClose = Close[0];
 
-				if (Close[0] < Open[0]) // rote Kerze
+				if (isRed)
+				{
+					lastRedClose   = Close[0];
 					lowestRedClose = Math.Min(lowestRedClose, Close[0]);
-				if (Close[0] > Open[0]) // gruene Kerze
+				}
+				if (isGreen)
+				{
+					lastGreenClose    = Close[0];
 					highestGreenClose = Math.Max(highestGreenClose, Close[0]);
+				}
 
 				lowestCloseAll  = Math.Min(lowestCloseAll, Close[0]);
 				highestCloseAll = Math.Max(highestCloseAll, Close[0]);
@@ -171,7 +191,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (entryDone || bias == 0)
 				return;
 
-			// Cutoff: letzte gueltige Signalkerze schliesst genau zur Cutoff-Zeit
+			// Cutoff: letzte gueltige Signalkerze schliesst spaetestens zur Cutoff-Zeit
 			if (barClose > cutoff)
 			{
 				entryDone = true;
@@ -181,19 +201,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (Position.MarketPosition != MarketPosition.Flat)
 				return;
 
-			// ---------- Phase 3: Einstieg auf den ersten Pullback ----------
-			if (bias == 1 && Close[0] < Open[0]) // erste rote Kerze nach dem Fenster
+			// ---------- Phase 3: Einstieg auf der ersten Signalkerze ----------
+			if (bias == 1 && isGreen)
 			{
-				double basis = lowestRedClose != double.MaxValue ? lowestRedClose
-				             : (AllowFallbackStop ? lowestCloseAll : double.MaxValue);
+				double basis = UseWindowExtremeStop ? lowestRedClose : lastRedClose;
+				if (basis == double.MaxValue)
+					basis = AllowFallbackStop ? lowestCloseAll : double.MaxValue;
 				if (basis == double.MaxValue) { entryDone = true; return; } // keine Stop-Basis vorhanden
 
 				stopPrice   = Instrument.MasterInstrument.RoundToTickSize(basis - StopOffsetTicks * TickSize);
 				double risk = Close[0] - stopPrice;
 
-				if (risk < TickSize) // Signalkerze schloss auf/unter Stop-Niveau -> ungueltig
+				// Zu klein (Signalkerze auf/unter Stop-Niveau) oder unter dem Mindest-R -> ungueltig
+				if (risk < Math.Max(1, MinRiskTicks) * TickSize)
 				{
-					if (StrictFirstPullback) entryDone = true;
+					if (StrictFirstSignal) entryDone = true;
 					return;
 				}
 
@@ -202,19 +224,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 					Instrument.MasterInstrument.RoundToTickSize(Close[0] + RewardMultiple * risk));
 				EnterLong(Contracts, SignalLong);
 				entryDone = true;
+				return;
 			}
-			else if (bias == -1 && Close[0] > Open[0]) // erste gruene Kerze nach dem Fenster
+
+			if (bias == -1 && isRed)
 			{
-				double basis = highestGreenClose != double.MinValue ? highestGreenClose
-				             : (AllowFallbackStop ? highestCloseAll : double.MinValue);
+				double basis = UseWindowExtremeStop ? highestGreenClose : lastGreenClose;
+				if (basis == double.MinValue)
+					basis = AllowFallbackStop ? highestCloseAll : double.MinValue;
 				if (basis == double.MinValue) { entryDone = true; return; }
 
 				stopPrice   = Instrument.MasterInstrument.RoundToTickSize(basis + StopOffsetTicks * TickSize);
 				double risk = stopPrice - Close[0];
 
-				if (risk < TickSize)
+				if (risk < Math.Max(1, MinRiskTicks) * TickSize)
 				{
-					if (StrictFirstPullback) entryDone = true;
+					if (StrictFirstSignal) entryDone = true;
 					return;
 				}
 
@@ -223,7 +248,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 					Instrument.MasterInstrument.RoundToTickSize(Close[0] - RewardMultiple * risk));
 				EnterShort(Contracts, SignalShort);
 				entryDone = true;
+				return;
 			}
+
+			// Keine Signalkerze -> Struktur fuer den Stop fortschreiben
+			if (isRed)   lastRedClose   = Close[0];
+			if (isGreen) lastGreenClose = Close[0];
 		}
 
 		// Ziel exakt auf Basis des tatsaechlichen Fills nachjustieren:
@@ -285,7 +315,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		[NinjaScriptProperty]
 		[Range(0, 100)]
-		[Display(Name = "Stop-Offset (Ticks)", Description = "Wie weit 'leicht unter/ueber' der Stop-Basis (FDXS: 1 Tick = 1 Punkt)", Order = 11, GroupName = "02 Risiko")]
+		[Display(Name = "Stop-Offset (Ticks)", Description = "Puffer unter/ueber der Stop-Basis. 0 = exakt auf dem Close der letzten Gegenkerze (FDXS: 1 Tick = 1 Punkt).", Order = 11, GroupName = "02 Risiko")]
 		public int StopOffsetTicks { get; set; }
 
 		[NinjaScriptProperty]
@@ -294,12 +324,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public int Contracts { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Fallback-Stop erlauben", Description = "Keine rote (Long) bzw. gruene (Short) Kerze im Fenster: tiefsten/hoechsten Close aller Fensterkerzen als Stop-Basis nutzen. Sonst kein Trade.", Order = 20, GroupName = "03 Verhalten")]
+		[Display(Name = "Stop aus Fenster-Extrem", Description = "False (Standard): Stop = Close der zuletzt gesehenen Gegenkerze. True: Stop = tiefster roter / hoechster gruener Close der 5 Anfangskerzen (altes Verhalten, deutlich weitere Stops).", Order = 13, GroupName = "02 Risiko")]
+		public bool UseWindowExtremeStop { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0, 500)]
+		[Display(Name = "Mindest-Risiko (Ticks)", Description = "Ist der Abstand Einstieg->Stop kleiner als dieser Wert, wird das Signal verworfen (Stop laege im Rauschen). 0 = Filter aus.", Order = 14, GroupName = "02 Risiko")]
+		public int MinRiskTicks { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Fallback-Stop erlauben", Description = "Keine Gegenkerze seit 09:00 vorhanden: tiefsten/hoechsten Close aller Fensterkerzen als Stop-Basis nutzen. Sonst kein Trade.", Order = 20, GroupName = "03 Verhalten")]
 		public bool AllowFallbackStop { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Nur erste Pullback-Kerze", Description = "True: Ist die erste Pullback-Kerze ungueltig (Close jenseits des Stops), kein Trade an diesem Tag. False: weitere Pullback-Kerzen abwarten.", Order = 21, GroupName = "03 Verhalten")]
-		public bool StrictFirstPullback { get; set; }
+		[Display(Name = "Nur erste Signalkerze", Description = "True: Ist die erste Signalkerze ungueltig (Close jenseits des Stops), kein Trade an diesem Tag. False (Standard): naechste Signalkerze abwarten.", Order = 21, GroupName = "03 Verhalten")]
+		public bool StrictFirstSignal { get; set; }
 		#endregion
 	}
 }

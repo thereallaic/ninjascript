@@ -6,8 +6,8 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 
 | Datei | Name | Idee |
 |---|---|---|
-| `Strategies/OpeningPullback2R.cs` | OpeningPullback2R | Opening-Bias aus den ersten 5 1-Min-Kerzen vs. 9:00-Open, Einstieg auf ersten Pullback, Stop an Fensterstruktur, Ziel = 2R |
-| `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf einen Pullback |
+| `Strategies/OpeningPullback2R.cs` | OpeningPullback2R | Opening-Bias aus den ersten 5 1-Min-Kerzen vs. 9:00-Open, Einstieg auf der ersten Kerze in Bias-Richtung, Stop auf dem Close der letzten Gegenkerze, Ziel = 2R |
+| `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf eine Signalkerze |
 
 ---
 
@@ -15,22 +15,24 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 
 Instrument-Ziel: **FDXS 09-26** (Micro-DAX, Eurex). 1-Minuten-Kerzen.
 
-1. **Referenz:** Open der 09:00-Kerze (Xetra-Eröffnung).
+1. **Referenz:** Open der 09:00-Kerze.
 2. **Beobachtung:** Kerzen 09:00–09:05 (5 Stück). Kein Handel in diesem Fenster.
 3. **Bias:** Close der 5. Kerze **über** dem 9:00-Open → Long-Bias. **Darunter** → Short-Bias. Exakt gleich → kein Trade.
-4. **Einstieg Long:** erste **rote** Kerze nach dem Fenster → Market-Einstieg bei deren Schluss (frühester Fill 09:06:00). **Short:** erste **grüne** Kerze, spiegelbildlich.
-5. **Stop Long:** tiefster **Close einer roten Kerze** aus den 5 Anfangskerzen, minus Offset (Standard 2 Ticks). **Short:** höchster Close einer grünen Kerze, plus Offset.
+4. **Einstieg Long:** erste **grüne** Kerze nach dem Fenster → Market-Order bei deren Schluss. **Short:** erste **rote** Kerze, spiegelbildlich.
+5. **Stop Long:** Close der **zuletzt gesehenen roten Kerze** vor dem Einstieg, minus Offset. **Short:** Close der zuletzt gesehenen grünen Kerze, plus Offset. Die „letzte Gegenkerze" wird ab 09:00 fortlaufend mitgeführt — sie kann also aus dem 5er-Fenster oder aus den Wartekerzen danach stammen.
 6. **Ziel:** R = |Einstieg − Stop|. Take-Profit = Einstieg ± 2R (nach Fill exakt auf den tatsächlichen Einstiegskurs berechnet).
 7. **Sonstiges:** max. 1 Trade pro Tag · kein Einstieg nach Cutoff (Standard 10:00) · offene Position wird spätestens zum Sessionende geflattet.
+
+> **Fill-Timing:** Bei `Calculate.OnBarClose` geht die Market-Order beim Schluss der Signalkerze raus und wird zum **Open der Folgekerze** gefüllt. Im Chart sieht der Einstiegspfeil deshalb immer eine Kerze „zu spät" aus. Das ist korrekt und realistisch — ein Fill exakt zum Schlusskurs der Signalkerze wäre in der Praxis nicht handelbar.
 
 ### Bewusste Festlegungen (per Parameter änderbar)
 
 | Fall | Verhalten (Default) | Parameter |
 |---|---|---|
-| Keine rote Kerze in den ersten 5 (bei Long-Bias) | Fallback: tiefster Close **aller** 5 Kerzen als Stop-Basis | `AllowFallbackStop` |
-| Erste Pullback-Kerze schließt bereits auf/jenseits des Stops | Kein Trade an diesem Tag | `StrictFirstPullback` |
+| Keine Gegenkerze seit 09:00 vorhanden | Fallback: tiefster/höchster Close **aller** 5 Fensterkerzen als Stop-Basis | `AllowFallbackStop` |
+| Signalkerze schließt bereits auf/jenseits des Stops (R ≤ 0) | Nächste Signalkerze abwarten | `StrictFirstSignal` |
 | Doji (Close == Open) | Zählt weder als rote noch als grüne Kerze | — |
-| Kein Pullback bis Cutoff | Kein Trade an diesem Tag | `CutoffHour/Minute` |
+| Keine Signalkerze bis Cutoff | Kein Trade an diesem Tag | `CutoffHour/Minute` |
 
 ### Parameter
 
@@ -40,10 +42,14 @@ Instrument-Ziel: **FDXS 09-26** (Micro-DAX, Eurex). 1-Minuten-Kerzen.
 | `InitialBars` | 5 | Anzahl Beobachtungskerzen |
 | `CutoffHour` / `CutoffMinute` | 10 / 0 | Letzte mögliche Signalkerze schließt zu dieser Zeit |
 | `RewardMultiple` | 2 | Take-Profit in R |
-| `StopOffsetTicks` | 2 | „leicht unter/über" der Stop-Basis (FDXS: 1 Tick = 1 Punkt = 1 €) |
+| `StopOffsetTicks` | 2 | Puffer unter/über der Stop-Basis. **0 = exakt auf dem Close** (FDXS: 1 Tick = 1 Punkt = 1 €) |
 | `Contracts` | 1 | Positionsgröße |
+| `UseWindowExtremeStop` | false | false = Stop auf dem Close der letzten Gegenkerze · true = tiefster roter / höchster grüner Close der 5 Anfangskerzen (altes Verhalten, deutlich weitere Stops) |
+| `MinRiskTicks` | 0 (aus) | Signale mit einem Stop-Abstand unter diesem Wert verwerfen — siehe Warnung unten |
 | `AllowFallbackStop` | true | s. o. |
-| `StrictFirstPullback` | true | s. o. |
+| `StrictFirstSignal` | false | s. o. |
+
+> **⚠️ Achtung, zu enge Stops:** Der Stop auf dem Close der letzten Gegenkerze kann bei ruhigen Minuten nur wenige Punkte entfernt liegen. R wird dann winzig, das 2R-Ziel liegt in Rauschweite, und Kommission plus Slippage fressen den Trade auf — bei FDXS können 1–2 Punkte Gebühren einen 4-Punkte-R komplett neutralisieren. Nach dem ersten Backtest die Spalte **MAE/Entry-Distanz** im Trades-Tab prüfen: Wenn viele Trades ein R unter ~10 Punkten haben, `MinRiskTicks` auf 8–15 setzen und erneut laufen lassen.
 
 > **Achtung Zeitzone:** Die 9:00-Logik greift auf die in NinjaTrader eingestellte Zeitzone zu. Prüfen unter **Tools → Options → General → Time zone** → muss `(UTC+01:00) Amsterdam, Berlin, …` sein.
 
@@ -51,19 +57,20 @@ Instrument-Ziel: **FDXS 09-26** (Micro-DAX, Eurex). 1-Minuten-Kerzen.
 
 ## OpeningImmediate2R — Variante 2 (Sofort-Einstieg)
 
-Identisch zu OpeningPullback2R bis auf den Einstieg: **kein Warten auf eine Pullback-Kerze.** Der Markteinstieg erfolgt direkt nach dem Richtungsentscheid.
+Identisch zu OpeningPullback2R bis auf den Einstieg: **kein Warten auf eine Signalkerze.** Der Markteinstieg erfolgt direkt nach dem Richtungsentscheid.
 
 **Timing-Detail:** Die 5. Kerze schließt um 09:05:00 — der „sofortige" Einstieg füllt daher um **09:05:00** (Open der Folgeminute), nicht 09:06. Wer den Fill exakt um 09:06:00 will, setzt `EntryDelayBars = 1` (dann wird eine Kerze — egal welcher Farbe — abgewartet).
 
-Stop- und Ziel-Logik unverändert: Stop an der Fensterstruktur (tiefster roter Close − Offset bzw. höchster grüner Close + Offset), Take-Profit = Einstieg ± 2R auf Basis des tatsächlichen Fills.
+Stop- und Ziel-Logik identisch zu Variante 1: Stop = Close der zuletzt gesehenen Gegenkerze im Fenster (rot bei Long, grün bei Short) ± Offset, Take-Profit = Einstieg ± 2R auf Basis des tatsächlichen Fills. Dadurch unterscheiden sich die beiden Strategien **nur** im Einstiegszeitpunkt — genau das macht den Vergleich aussagekräftig.
 
 **Zusätzliche/entfallene Parameter gegenüber Variante 1:**
 
 | Parameter | Default | Bedeutung |
 |---|---|---|
 | `EntryDelayBars` | 0 | 0 = Order beim Schluss der 5. Kerze (Fill 09:05:00) · 1 = eine Kerze später (Fill 09:06:00) |
+| `MinRiskTicks` | 0 (aus) | wie Variante 1 |
 | ~~`CutoffHour/Minute`~~ | — | entfällt (Einstieg ist deterministisch, kein Warten) |
-| ~~`StrictFirstPullback`~~ | — | entfällt (kein Pullback-Konzept) |
+| ~~`StrictFirstSignal`~~ | — | entfällt (kein Signalkerzen-Konzept) |
 
 Randfall: Schließt die 5. Kerze bereits auf/jenseits des berechneten Stops (R ≤ 0), findet kein Trade statt.
 
