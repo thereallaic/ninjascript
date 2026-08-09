@@ -104,6 +104,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				MinRiskTicks          = 0;
 				AllowFallbackStop     = true;
 				StrictFirstSignal     = false;
+				UseFixedRisk          = true;
+				RiskPerTrade          = 100;
+				MaxContracts          = 50;
 				Contracts             = 1;
 			}
 			else if (State == State.DataLoaded)
@@ -111,6 +114,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (BarsPeriod.BarsPeriodType != BarsPeriodType.Minute || BarsPeriod.Value != 1)
 					Log(Name + ": Bitte eine 1-Minuten-Datenserie verwenden (aktuell: " + BarsPeriod + "). Die Logik setzt 1-Min-Kerzen voraus.", LogLevel.Warning);
 			}
+		}
+
+		// Kontraktzahl so, dass 1R moeglichst genau dem gewuenschten Geldrisiko entspricht.
+		// riskPerUnit = Kursdistanz Einstieg->Stop. Rueckgabe 0 => Trade auslassen.
+		private int CalcQuantity(double riskPerUnit)
+		{
+			if (!UseFixedRisk)
+				return Contracts;
+
+			double pointValue = Instrument.MasterInstrument.PointValue; // Waehrung je Punkt (FDXS: 1 EUR)
+			if (pointValue <= 0 || riskPerUnit <= 0)
+				return 0;
+
+			int qty = (int)Math.Floor(RiskPerTrade / (riskPerUnit * pointValue));
+			return Math.Min(qty, MaxContracts);
 		}
 
 		private void ResetDay(DateTime day)
@@ -219,10 +237,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 					return;
 				}
 
+				int qtyLong = CalcQuantity(risk);
+				if (qtyLong < 1) // R zu gross fuer das Geldrisiko -> Trade auslassen
+				{
+					if (StrictFirstSignal) entryDone = true;
+					return;
+				}
+
 				SetStopLoss(SignalLong, CalculationMode.Price, stopPrice, false);
 				SetProfitTarget(SignalLong, CalculationMode.Price,
 					Instrument.MasterInstrument.RoundToTickSize(Close[0] + RewardMultiple * risk));
-				EnterLong(Contracts, SignalLong);
+				EnterLong(qtyLong, SignalLong);
 				entryDone = true;
 				return;
 			}
@@ -243,10 +268,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 					return;
 				}
 
+				int qtyShort = CalcQuantity(risk);
+				if (qtyShort < 1)
+				{
+					if (StrictFirstSignal) entryDone = true;
+					return;
+				}
+
 				SetStopLoss(SignalShort, CalculationMode.Price, stopPrice, false);
 				SetProfitTarget(SignalShort, CalculationMode.Price,
 					Instrument.MasterInstrument.RoundToTickSize(Close[0] - RewardMultiple * risk));
-				EnterShort(Contracts, SignalShort);
+				EnterShort(qtyShort, SignalShort);
 				entryDone = true;
 				return;
 			}
@@ -319,17 +351,31 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public int StopOffsetTicks { get; set; }
 
 		[NinjaScriptProperty]
+		[Display(Name = "Festes Geldrisiko je Trade", Description = "True (Standard): Kontraktzahl wird so berechnet, dass 1R dem Betrag unten entspricht. False: feste Kontraktzahl.", Order = 12, GroupName = "02 Risiko")]
+		public bool UseFixedRisk { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(1, 1000000)]
+		[Display(Name = "Risiko je Trade (1R)", Description = "Geldbetrag in INSTRUMENTENWAEHRUNG, den 1R kosten darf. FDXS rechnet in EUR -> 100 = 100 EUR.", Order = 13, GroupName = "02 Risiko")]
+		public double RiskPerTrade { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(1, 1000)]
+		[Display(Name = "Max. Kontrakte", Description = "Obergrenze der berechneten Positionsgroesse (Schutz vor Mini-Stops).", Order = 14, GroupName = "02 Risiko")]
+		public int MaxContracts { get; set; }
+
+		[NinjaScriptProperty]
 		[Range(1, 100)]
-		[Display(Name = "Kontrakte", Order = 12, GroupName = "02 Risiko")]
+		[Display(Name = "Kontrakte (fest)", Description = "Wird nur verwendet, wenn 'Festes Geldrisiko je Trade' auf False steht.", Order = 15, GroupName = "02 Risiko")]
 		public int Contracts { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Stop aus Fenster-Extrem", Description = "False (Standard): Stop = Close der zuletzt gesehenen Gegenkerze. True: Stop = tiefster roter / hoechster gruener Close der 5 Anfangskerzen (altes Verhalten, deutlich weitere Stops).", Order = 13, GroupName = "02 Risiko")]
+		[Display(Name = "Stop aus Fenster-Extrem", Description = "False (Standard): Stop = Close der zuletzt gesehenen Gegenkerze. True: Stop = tiefster roter / hoechster gruener Close der 5 Anfangskerzen (altes Verhalten, deutlich weitere Stops).", Order = 16, GroupName = "02 Risiko")]
 		public bool UseWindowExtremeStop { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(0, 500)]
-		[Display(Name = "Mindest-Risiko (Ticks)", Description = "Ist der Abstand Einstieg->Stop kleiner als dieser Wert, wird das Signal verworfen (Stop laege im Rauschen). 0 = Filter aus.", Order = 14, GroupName = "02 Risiko")]
+		[Display(Name = "Mindest-Risiko (Ticks)", Description = "Ist der Abstand Einstieg->Stop kleiner als dieser Wert, wird das Signal verworfen (Stop laege im Rauschen). 0 = Filter aus.", Order = 17, GroupName = "02 Risiko")]
 		public int MinRiskTicks { get; set; }
 
 		[NinjaScriptProperty]

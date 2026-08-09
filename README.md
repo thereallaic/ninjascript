@@ -43,11 +43,40 @@ Instrument-Ziel: **FDXS 09-26** (Micro-DAX, Eurex). 1-Minuten-Kerzen.
 | `CutoffHour` / `CutoffMinute` | 10 / 0 | Letzte mögliche Signalkerze schließt zu dieser Zeit |
 | `RewardMultiple` | 2 | Take-Profit in R |
 | `StopOffsetTicks` | 2 | Puffer unter/über der Stop-Basis. **0 = exakt auf dem Close** (FDXS: 1 Tick = 1 Punkt = 1 €) |
-| `Contracts` | 1 | Positionsgröße |
+| `UseFixedRisk` | true | Positionsgröße aus dem Geldrisiko berechnen (siehe unten) |
+| `RiskPerTrade` | 100 | Betrag, den 1R kosten darf — **in Instrumentenwährung** |
+| `MaxContracts` | 50 | Obergrenze der berechneten Positionsgröße |
+| `Contracts` | 1 | Feste Positionsgröße — nur aktiv wenn `UseFixedRisk = false` |
 | `UseWindowExtremeStop` | false | false = Stop auf dem Close der letzten Gegenkerze · true = tiefster roter / höchster grüner Close der 5 Anfangskerzen (altes Verhalten, deutlich weitere Stops) |
 | `MinRiskTicks` | 0 (aus) | Signale mit einem Stop-Abstand unter diesem Wert verwerfen — siehe Warnung unten |
 | `AllowFallbackStop` | true | s. o. |
 | `StrictFirstSignal` | false | s. o. |
+
+### Positionsgrößen-Normierung (1R = fester Geldbetrag)
+
+Mit `UseFixedRisk = true` (Standard) berechnet die Strategie die Kontraktzahl selbst:
+
+```
+Kontrakte = abrunden( RiskPerTrade / (R in Punkten × Punktwert) )
+```
+
+FDXS hat **1 Punkt = 1 €**, bei `RiskPerTrade = 100` also:
+
+| R (Punkte) | Kontrakte | Tatsächliches Risiko |
+|---|---|---|
+| 10 | 10 | 100 € |
+| 20 | 5 | 100 € |
+| 42 | 2 | 84 € |
+| 60 | 1 | 60 € |
+| 101 | 0 → **Trade entfällt** | — |
+
+Warum das den Backtest überhaupt erst aussagekräftig macht: Bei fester Kontraktzahl bestimmt die zufällige Stop-Distanz, wie viel ein Trade wiegt — ein Gewinner mit 40 Punkten R zählt viermal so viel wie einer mit 10. Die Equity-Kurve misst dann Stop-Distanzen statt Signalqualität. Mit fixem Geldrisiko wiegt jeder Trade gleich, und der Profit Factor sagt tatsächlich etwas über den Edge aus.
+
+**Drei Dinge, die du wissen musst:**
+
+1. **Währung:** `RiskPerTrade` ist in der Währung des Instruments. FDXS notiert in **EUR** — 100 bedeutet also 100 €, nicht 100 $. Willst du wirklich 100 US-Dollar, trag beim aktuellen Kurs rund 86 ein.
+2. **Abrundung:** Es gibt nur ganze Kontrakte. Bei großem R wird das tatsächliche Risiko spürbar kleiner als 100 € (siehe Tabelle). Dass FDXS nur 1 €/Punkt hat, ist hier ein Vorteil — beim großen FDAX (25 €/Punkt) wäre die Normierung praktisch unmöglich.
+3. **Übergroßes R:** Ergibt die Rechnung 0 Kontrakte (R > 100 Punkte bei 100 € Risiko), wird der Trade **ausgelassen**. Das ist gewollt — die Alternative wäre, das Risikolimit zu überschreiten. Behalte im Blick, wie oft das passiert: Wenn regelmäßig Tage wegfallen, ist entweder `RiskPerTrade` zu niedrig oder die Stop-Logik zu weit.
 
 > **⚠️ Achtung, zu enge Stops:** Der Stop auf dem Close der letzten Gegenkerze kann bei ruhigen Minuten nur wenige Punkte entfernt liegen. R wird dann winzig, das 2R-Ziel liegt in Rauschweite, und Kommission plus Slippage fressen den Trade auf — bei FDXS können 1–2 Punkte Gebühren einen 4-Punkte-R komplett neutralisieren. Nach dem ersten Backtest die Spalte **MAE/Entry-Distanz** im Trades-Tab prüfen: Wenn viele Trades ein R unter ~10 Punkten haben, `MinRiskTicks` auf 8–15 setzen und erneut laufen lassen.
 
@@ -69,6 +98,7 @@ Stop- und Ziel-Logik identisch zu Variante 1: Stop = Close der zuletzt gesehenen
 |---|---|---|
 | `EntryDelayBars` | 0 | 0 = Order beim Schluss der 5. Kerze (Fill 09:05:00) · 1 = eine Kerze später (Fill 09:06:00) |
 | `MinRiskTicks` | 0 (aus) | wie Variante 1 |
+| `UseFixedRisk` / `RiskPerTrade` / `MaxContracts` | true / 100 / 50 | wie Variante 1 |
 | ~~`CutoffHour/Minute`~~ | — | entfällt (Einstieg ist deterministisch, kein Warten) |
 | ~~`StrictFirstSignal`~~ | — | entfällt (kein Signalkerzen-Konzept) |
 
