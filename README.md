@@ -9,6 +9,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningPullback2R.cs` | OpeningPullback2R | Opening-Bias aus den ersten 5 1-Min-Kerzen vs. 9:00-Open, Einstieg auf der ersten Kerze in Bias-Richtung, Stop auf dem Close der letzten Gegenkerze, Ziel = 2R |
 | `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf eine Signalkerze |
 | `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
+| `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
 
 ---
 
@@ -149,6 +150,45 @@ Genau dieser Trade-off ist der interessante Vergleich: Variante 1 braucht wenige
 Alle übrigen Parameter (Zeiten, `UseFixedRisk`, `RiskPerTrade`, `MaxContracts`, `MinRiskTicks`, `StrictFirstSignal`) verhalten sich wie in Variante 1.
 
 > Die Warnung zu Mini-Stops aus Variante 1 gilt hier deutlich schwächer — durch den Docht-Abstand fällt R selten unter ~5 Punkte. `MinRiskTicks` kann meist auf 0 bleiben.
+
+---
+
+## OpeningPullbackSwingReverse1R — Variante 4 (Umkehrung von Variante 3)
+
+Testet die Gegenhypothese: **Ist das Signal aus Variante 3 in Wahrheit ein Kontra-Indikator?**
+
+Alles bleibt identisch — Richtungsentscheid aus den 5 Anfangskerzen, Signalkerze, Einstiegszeitpunkt, Positionsgrößenlogik. Gedreht wird nur die Orderrichtung:
+
+| Bias (Close 5. Kerze vs. 9:00-Open) | Auslöser | Variante 3 | Variante 4 |
+|---|---|---|---|
+| über dem Open | erste **grüne** Kerze | LONG | **SHORT** |
+| unter dem Open | erste **rote** Kerze | SHORT | **LONG** |
+
+Der Auslöser bleibt bewusst unverändert: Bei Long-Bias wird weiterhin auf die erste grüne Kerze gewartet — nur wird dort jetzt geshortet statt gekauft. Dadurch handeln beide Varianten **exakt dieselben Tage zur exakt selben Minute**, und der Vergleich isoliert allein die Richtung.
+
+### Die zwei Stop-Modi
+
+**Spiegel-Modus (Standard, `UseStructuralStop = false`)** — R wird von Variante 3 übernommen und nur um den Einstieg geklappt:
+
+```
+Long-Bias, Signalkerze schließt bei C, Swing-Low bei L, Offset O:
+  Variante 3:  Stop = L − O          R = C − (L − O)     Ziel = C + 1R
+  Variante 4:  Stop = C + R                              Ziel = C − 1R
+```
+
+Konkret bei C = 26280, L = 26260, O = 2: R = 22 Punkte. Variante 3 hat Stop 26258 / Ziel 26302 — Variante 4 hat Stop 26302 / Ziel 26258. **Jeder Trade ist das fotografische Negativ:** Was in Variante 3 ins Ziel lief, läuft hier in den Stop und umgekehrt. Läuft Variante 3 auf 40 % Trefferquote, muss Variante 4 auf rund 60 % kommen.
+
+> Das gilt exakt nur bei `RewardMultiple = 1`, weil Stop und Ziel dann gleich weit entfernt sind. Stellst du auf 2R um, bleibt der Stop bei 1R stehen und die Spiegelung ist keine saubere Umkehr mehr.
+
+**Struktureller Modus (`UseStructuralStop = true`)** — der Stop sitzt am Swing-Extrem der Gegenseite (beim Short also über dem Swing-High). Handelstechnisch die sinnvollere Platzierung, aber R und damit die Positionsgröße weichen von Variante 3 ab, es ist also kein exakter Umkehrtest mehr, sondern eine eigenständige Strategie.
+
+### Was das Ergebnis bedeutet
+
+- **Beide verlieren** → das Signal trägt keine Information, die Kosten fressen beide Seiten. Häufigster Fall, und ein klares Stopp-Signal für diesen Ansatz.
+- **Variante 4 gewinnt deutlich** → der Opening-Pullback ist am FDXS ein Fade-Setup. Erst gegen einen zweiten Zeitraum (Out-of-Sample) prüfen, bevor du das glaubst.
+- **Beide etwa bei null** → Rauschen, mehr Handelstage nötig.
+
+Alle Parameter entsprechen Variante 3, zusätzlich nur `UseStructuralStop`.
 
 ---
 
