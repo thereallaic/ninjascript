@@ -244,7 +244,25 @@ Abgerundet wird bewusst: Das Risiko liegt damit nie *über* 100 €, bei weiten 
 
 **Der Stop auf dem Candle-Open erzwingt implizit die Kerzenfarbe.** Bei Long muss der Stop unter dem Einstieg liegen, also Open < Close → grüne Kerze. Eine rote Kerze über dem EMA50 mit 2× Volumen hätte ihren Stop *über* dem Einstieg und wird deshalb übersprungen (Debug-Log: „Stop auf falscher Seite"). Long handelt faktisch nur grüne Kerzen, Short nur rote.
 
-> **⚠️ Kerzen mit winzigem Körper.** Schließt eine Signalkerze nur 1–2 Punkte über ihrem Open, ist die Stopdistanz 1–2 Punkte — die Positionsgröße schießt auf das `MaxContracts`-Limit hoch und der Stop wird fast garantiert sofort getroffen. Solche Trades verzerren die Statistik massiv. `MinStopTicks` ist standardmäßig **aus** (0), damit die Regeln unverfälscht laufen. Prüfe nach dem ersten Durchlauf die Stopdistanzen im Trades-Tab; häufen sich Werte unter ~5 Punkten, setz `MinStopTicks` auf 5–10.
+### Warum `MinStopTicks` wichtiger ist, als es aussieht
+
+Bei festem Geldrisiko wächst die Positionsgröße **invers zur Stopdistanz**. Die Kosten fallen aber **pro Kontrakt** an — ein enger Stop bedeutet also nicht nur mehr Kontrakte, sondern proportional mehr Gebühren und Slippage bei unverändertem 1R.
+
+Mit ~2,50 € Reibung je Kontrakt und Round-Turn (Kommission + je 1 Tick Slippage bei Ein- und Ausstieg) und 100 € Risiko:
+
+| Stopdistanz | Kontrakte | Reibung gesamt | Anteil an 1R | Nötige Trefferquote bei 1R |
+|---|---|---|---|---|
+| 5 Pkt | 20 | 50 € | 50 % | 75 % |
+| 10 Pkt | 10 | 25 € | 25 % | 63 % |
+| 15 Pkt | 6 | 15 € | 15 % | 58 % |
+| 25 Pkt | 4 | 10 € | 10 % | 55 % |
+| 50 Pkt | 2 | 5 € | 5 % | 53 % |
+
+Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen — chancenlos. Deshalb steht `MinStopTicks` auf **10** statt auf 0.
+
+**Warum 10 und nicht höher:** 10 ist als *Pathologie-Filter* gesetzt, nicht als Optimierung. Er entfernt die kaputten Fälle (Stop im Spread und im Minutenrauschen), greift aber noch nicht stark in deine Regeln ein. Ökonomisch wären 20–25 besser, das kostet aber spürbar Signale. **Prüfe im ersten Durchlauf die Verteilung der Stopdistanzen** im Trades-Tab bzw. im Debug-Log — dann weißt du, was ein höherer Wert wirklich kostet, statt es zu schätzen. Das ist genau die Art Entscheidung, die aus den Daten kommen sollte und nicht aus einem Bauchgefühl.
+
+> Nebeneffekt: `MinStopTicks` deckelt indirekt die Positionsgröße auf `RiskAmount / (MinStopTicks × PointValue)` — bei 10 also auf 10 Kontrakte. `MaxContracts = 50` wird damit nie erreicht und ist nur noch ein Sicherheitsnetz, falls du den Filter absenkst.
 
 ### Parameter
 
@@ -260,7 +278,7 @@ Abgerundet wird bewusst: Das Risiko liegt damit nie *über* 100 €, bei weiten 
 | `RiskAmount` | 100 | Geldrisiko je Trade (1R) in Instrumentenwährung (EUR bei FDXS) |
 | `RewardMultiple` | **1** | **Der R-Wert zum Durchtesten.** Ziel = Multiple × Stopdistanz |
 | `MaxContracts` | 50 | Obergrenze der berechneten Positionsgröße |
-| `MinStopTicks` | 0 (aus) | Signale mit kleinerer Stopdistanz verwerfen — siehe Warnung oben |
+| `MinStopTicks` | **10** | Signale mit kleinerer Stopdistanz verwerfen — siehe Kostenrechnung oben. 0 = aus |
 | `MaxTradesPerDay` | 0 | 0 = unbegrenzt |
 | `EnableDebugLog` | false | Loggt Signal, Volumenverhältnis, EMA, Stopdistanz, Risiko, Kappung, Fill und Zeit-Exit |
 

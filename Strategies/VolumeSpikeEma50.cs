@@ -114,7 +114,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				RiskAmount       = 100;
 				RewardMultiple   = 1;      // frei einstellbarer R-Wert
 				MaxContracts     = 50;
-				MinStopTicks     = 0;      // 0 = Filter aus
+				MinStopTicks     = 10;     // siehe Hinweis unten; 0 = Filter aus
 				MaxTradesPerDay  = 0;      // 0 = unbegrenzt
 				EnableDebugLog   = false;
 			}
@@ -396,7 +396,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		[NinjaScriptProperty]
 		[Range(0, 500)]
-		[Display(Name = "Mindest-Stopdistanz (Ticks)", Description = "Signale mit kleinerer Stopdistanz verwerfen. Schuetzt vor Mini-Stops bei Kerzen mit winzigem Koerper. 0 = Filter aus.", Order = 23, GroupName = "03 Risiko")]
+		[Display(Name = "Mindest-Stopdistanz (Ticks)", Description = "Signale mit kleinerer Stopdistanz verwerfen. Wichtig, weil die Positionsgroesse invers zur Stopdistanz waechst: Ein 5-Punkte-Stop bedeutet 20 Kontrakte und damit den 20-fachen Kostenblock bei gleichem 1R. Standard 10. 0 = Filter aus.", Order = 23, GroupName = "03 Risiko")]
 		public int MinStopTicks { get; set; }
 
 		[NinjaScriptProperty]
