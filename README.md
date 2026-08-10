@@ -10,7 +10,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf eine Signalkerze |
 | `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
 | `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
-| `Strategies/VolumeSpikeEma50.cs` | VolumeSpikeEma50 | Eigenständiger Ansatz: Long **und** Short 09:00–22:00, Volumenausbruch (2×) mit EMA50-Richtungsfilter, Stop auf dem Candle-Open, frei einstellbares R-Ziel |
+| `Strategies/VolumeSpikeEma50.cs` | VolumeSpikeEma50 | Eigenständiger Ansatz: Long **und** Short 12:00–22:00 (Mo–Do), Volumenausbruch (2×) mit EMA50-Richtungsfilter, Stop auf dem Candle-Open, frei einstellbares R-Ziel |
 
 ---
 
@@ -213,13 +213,15 @@ Alle Parameter entsprechen Variante 3, zusätzlich nur `UseStructuralStop`.
 
 Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch in Richtung des Trends läuft weiter.** Der EMA50 liefert die Trendrichtung, das Volumen den Auslöser.
 
-1. **Handelsfenster:** 09:00–22:00. Außerhalb passiert nichts.
+1. **Handelsfenster:** 12:00–22:00, **Montag bis Donnerstag**. Außerhalb passiert nichts.
 2. **Signalkerze:** Volumen ≥ **2,0 ×** Durchschnittsvolumen der 20 vorhergehenden Kerzen.
 3. **Richtung:** Close **über** EMA50 → Long · Close **unter** EMA50 → Short.
 4. **Stop = Open der Signalkerze.**
 5. **Positionsgröße** so, dass ein Stopout ungefähr **100 €** kostet.
 6. **Ziel = `RewardMultiple` × Stopdistanz** — der frei einstellbare R-Wert, Standard 1.
 7. Immer nur **eine Position gleichzeitig**. Offene Position wird um **22:00 glattgestellt**.
+
+> **Sperrzeiten:** Die Vorgabe „keine Trades von 09:00 bis 12:00" ist über den **Fensterstart** abgebildet (`StartHour = 12`), nicht über eine eigene Blackout-Mechanik — bei einem Fenster, das ohnehin um 09:00 beginnen würde, ist beides identisch. Der Freitagsfilter (`TradeFriday = false`) sperrt nur **neue Einstiege**; er steht im Code nach der Glattstellungs-Logik, damit eine offene Position in jedem Fall regulär beendet würde.
 
 ### Positionsgröße und der Kappungsfall
 
@@ -268,9 +270,10 @@ Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen
 
 | Parameter | Default | Bedeutung |
 |---|---|---|
-| `StartHour` / `StartMinute` | 9 / 0 | Beginn des Handelsfensters |
+| `StartHour` / `StartMinute` | **12** / 0 | Beginn des Handelsfensters — bildet die Sperre 09:00–12:00 ab |
 | `EndHour` / `EndMinute` | 22 / 0 | Ende — danach keine neuen Einstiege |
 | `CloseAtWindowEnd` | true | Offene Position um 22:00 schließen · false = bis Stop/Ziel laufen lassen |
+| `TradeFriday` | **false** | Freitags keine neuen Einstiege |
 | `EmaPeriod` | 50 | Periode des Richtungsfilters |
 | `VolumeMultiple` | 2.0 | Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch zählt |
 | `VolumeLookback` | 20 | Anzahl Kerzen für den Durchschnitt — **ohne** die aktuelle Kerze |
@@ -286,7 +289,8 @@ Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen
 
 - **Der Volumen-Durchschnitt schließt die Signalkerze aus** (`SMA(Volume, 20)[1]`). Sonst würde eine Volumenspitze ihren eigenen Schwellwert nach oben ziehen und das Signal systematisch abschwächen.
 - **„Über dem EMA50" ist als Close > EMA50 umgesetzt** — nicht als „gesamte Kerze inklusive Docht oberhalb".
-- **Zeitstempel-Logik:** Die Kerze, die um 09:00 schließt, enthält noch Daten von vor 09:00 und zählt nicht zum Fenster. Erste mögliche Signalkerze schließt um 09:01.
+- **Zeitstempel-Logik:** Die Kerze, die um 12:00 schließt, enthält noch Daten von vor 12:00 und zählt nicht zum Fenster. Erste mögliche Signalkerze schließt um 12:01.
+- **Stichprobengröße:** Die beiden Sperren zusammen kosten spürbar Handelszeit — der Freitag rund 20 % der Tage, das Fenster 09:00–12:00 die volumenstärkste Phase des europäischen Handelstags. Rechne mit deutlich weniger Signalen als vorher und prüfe im Ergebnis zuerst die **Anzahl der Trades**, bevor du Kennzahlen wie Profit Factor interpretierst.
 - **Nachrechnung nach dem Fill:** Im Normalfall bleibt der Stop auf dem Candle-Open (absoluter Level), das Ziel wird aus dem tatsächlichen Fill-Abstand berechnet. Im Kappungsfall behält der Stop seinen Geldabstand zum Fill, damit das Risiko exakt 100 € bleibt.
 - **Timeframe:** explizit für 1-Minuten-Kerzen. Bei anderer Bar-Größe warnt die Strategie im Log.
 

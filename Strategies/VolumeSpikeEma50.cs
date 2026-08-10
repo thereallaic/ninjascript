@@ -27,7 +27,10 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //                      NinjaTrader 8.1, ausgelegt auf 1-Minuten-Kerzen
 //
 // Regelwerk:
-//  1. Handelsfenster 09:00–22:00 (lokale NT-Zeitzone). Ausserhalb passiert nichts.
+//  1. Handelsfenster 12:00–22:00 (lokale NT-Zeitzone). Ausserhalb passiert nichts.
+//     Die Sperre 09:00–12:00 ist ueber den Fensterstart abgebildet, nicht ueber eine
+//     eigene Blackout-Mechanik — bei einem Fenster ab 09:00 ist beides identisch.
+//     Freitags werden keine neuen Positionen eroeffnet (TradeFriday).
 //  2. Signalkerze = Volumen >= VolumeMultiple (Standard 2,0) x Durchschnittsvolumen
 //     der VolumeLookback (Standard 20) vorhergehenden Kerzen. Der Durchschnitt
 //     schliesst die aktuelle Kerze AUS (SMA[1]), sonst wuerde die Signalkerze ihren
@@ -101,11 +104,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				IsInstantiatedOnEachOptimizationIteration = true;
 
 				// Parameter-Defaults
-				StartHour        = 9;
+				StartHour        = 12;     // 09:00–12:00 ist gesperrt
 				StartMinute      = 0;
 				EndHour          = 22;
 				EndMinute        = 0;
 				CloseAtWindowEnd = true;
+				TradeFriday      = false;  // freitags keine Einstiege
 				EnableLong       = true;
 				EnableShort      = true;
 				EmaPeriod        = 50;
@@ -181,6 +185,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			// Die Kerze, die exakt zur Startzeit schliesst, enthaelt noch Daten davor
 			// und zaehlt deshalb nicht zum Fenster.
 			if (barClose <= windowStart)
+				return;
+
+			// ---------- Wochentagsfilter ----------
+			// Steht bewusst NACH der Glattstellung: sperrt nur neue Einstiege, eine
+			// (theoretisch) offene Position wuerde weiterhin korrekt beendet.
+			if (!TradeFriday && Time[0].DayOfWeek == DayOfWeek.Friday)
 				return;
 
 			// ---------- Volumenbedingung ----------
@@ -355,6 +365,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Zum Fensterende glattstellen", Description = "True (Standard): offene Position wird am Fensterende geschlossen. False: Position laeuft bis Stop oder Ziel (bzw. Sessionende).", Order = 5, GroupName = "01 Zeiten")]
 		public bool CloseAtWindowEnd { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Freitags handeln", Description = "False (Standard): freitags werden keine neuen Positionen eroeffnet. Eine bereits offene Position wird trotzdem regulaer beendet.", Order = 6, GroupName = "01 Zeiten")]
+		public bool TradeFriday { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(2, 500)]
