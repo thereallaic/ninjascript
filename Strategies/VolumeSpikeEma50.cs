@@ -42,19 +42,14 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //     Daraus folgt implizit die Kerzenfarbe: Bei Long muss Open < Close sein (gruene
 //     Kerze), sonst laege der Stop ueber dem Einstieg. Rote Kerzen ueber dem EMA
 //     erzeugen daher kein Long-Signal — und umgekehrt fuer Short.
-//  5. Risikobudget je Trade (1R):
-//        UsePercentRisk = true  (Standard): RiskPercent % des MITWACHSENDEN Kontostands
-//          Equity = StartingCapital + realisierte Performance der Strategie
-//          Bei 10.000 Start und 1 % ist der erste Trade also 100 — danach compoundet es.
-//        UsePercentRisk = false: fester Betrag RiskAmount
-//     Positionsgroesse so, dass ein Stopout ungefaehr diesem Budget entspricht:
-//        Kontrakte = abrunden( Budget / (Stopdistanz x PointValue) )
-//     Abgerundet wird bewusst — das Risiko liegt damit nie ueber dem Budget,
+//  5. Positionsgroesse so, dass ein Stopout ungefaehr RiskAmount kostet:
+//        Kontrakte = abrunden( RiskAmount / (Stopdistanz x PointValue) )
+//     Abgerundet wird bewusst — das Risiko liegt damit nie ueber RiskAmount,
 //     bei weiten Stops aber spuerbar darunter.
-//  6. KAPPUNGSFALL: Ist die Stopdistanz so gross, dass selbst 1 Kontrakt mehr als das
-//     Budget riskieren wuerde (Kontrakte = 0), wird 1 Kontrakt gehandelt und der
-//     Stop auf genau das Budget herangezogen:
-//        Stopdistanz = Budget / PointValue
+//  6. KAPPUNGSFALL: Ist die Stopdistanz so gross, dass selbst 1 Kontrakt mehr als
+//     RiskAmount riskieren wuerde (Kontrakte = 0), wird 1 Kontrakt gehandelt und der
+//     Stop auf genau RiskAmount herangezogen:
+//        Stopdistanz = RiskAmount / PointValue
 //     Der Stop liegt dann NICHT mehr auf dem Candle-Open, sondern auf dem Geldlimit.
 //     Diese Trades werden im Debug-Log als "gekappt" markiert.
 //  7. Take-Profit = Einstieg +/- RewardMultiple x tatsaechliche Stopdistanz.
@@ -120,10 +115,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				EmaPeriod        = 50;
 				VolumeMultiple   = 2.0;
 				VolumeLookback   = 20;
-				UsePercentRisk   = true;
-				StartingCapital  = 10000;
-				RiskPercent      = 1.0;
-				RiskAmount       = 100;    // nur aktiv, wenn UsePercentRisk = false
+				RiskAmount       = 100;
 				RewardMultiple   = 1;      // frei einstellbarer R-Wert
 				MaxContracts     = 50;
 				MinStopTicks     = 10;     // siehe Hinweis unten; 0 = Filter aus
@@ -151,36 +143,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 					Print(Name + ": Start — Instrument=" + Instrument.FullName
 						+ ", PointValue=" + Instrument.MasterInstrument.PointValue
 						+ ", TickSize=" + Instrument.MasterInstrument.TickSize
-						+ ", Risiko=" + (UsePercentRisk
-							? RiskPercent + "% von " + StartingCapital + " (= " + (StartingCapital * RiskPercent / 100.0) + " zu Beginn)"
-							: RiskAmount + " fest")
-						+ ", RewardMultiple=" + RewardMultiple);
+						+ ", RiskAmount=" + RiskAmount + ", RewardMultiple=" + RewardMultiple);
 			}
-		}
-
-		// Aktuelles Geldrisiko fuer den naechsten Trade.
-		// Bei UsePercentRisk waechst/faellt es mit dem Kontostand (Compounding).
-		//
-		// Als Equity dient StartingCapital + realisierte Performance DIESER Strategie.
-		// Bewusst nicht Account.Get(AccountItem.CashValue): im Strategy Analyzer ist der
-		// Account-Zugriff nicht verlaesslich, SystemPerformance funktioniert dagegen in
-		// Backtest und Realtime gleich. Unrealisierte Gewinne der offenen Position
-		// zaehlen nicht mit — gesized wird ohnehin nur im flachen Zustand.
-		private double CurrentRiskAmount()
-		{
-			if (!UsePercentRisk)
-				return RiskAmount;
-
-			double equity = StartingCapital + SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
-			if (equity <= 0)
-				return 0;                                  // Konto aufgebraucht -> keine Trades mehr
-
-			return equity * RiskPercent / 100.0;
-		}
-
-		private double CurrentEquity()
-		{
-			return StartingCapital + SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
 		}
 
 		protected override void OnBarUpdate()
@@ -277,23 +241,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			// ---------- Positionsgroesse ----------
-			double riskMoney = CurrentRiskAmount();
-			if (riskMoney <= 0)
-			{
-				if (EnableDebugLog)
-					Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " VSE: Signal verworfen — kein Risikobudget (Equity=" + Math.Round(CurrentEquity(), 2) + ")");
-				return;
-			}
-
-			int    qty       = (int)Math.Floor(riskMoney / (dist * pointValue));
+			int    qty       = (int)Math.Floor(RiskAmount / (dist * pointValue));
 			double useDist   = dist;
 			bool   isCapped  = false;
 
 			if (qty < 1)
 			{
-				// Selbst 1 Kontrakt riskiert mehr als das Budget -> Stop auf das Geldlimit ziehen
+				// Selbst 1 Kontrakt riskiert mehr als RiskAmount -> Stop auf das Geldlimit ziehen
 				qty      = 1;
-				useDist  = riskMoney / pointValue;
+				useDist  = RiskAmount / pointValue;
 				isCapped = true;
 			}
 
@@ -334,10 +290,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					+ " | Vol=" + Volume[0] + " (" + Math.Round(Volume[0] / avg, 2) + "x Schnitt " + Math.Round(avg, 1) + ")"
 					+ " | EMA50=" + Math.Round(ema[0], 1)
 					+ " | Stop=" + stopLevel + " (" + Math.Round(useDist, 1) + " Pkt" + (isCapped ? ", GEKAPPT" : ", Candle-Open") + ")"
-					+ " | Equity=" + Math.Round(CurrentEquity(), 2)
-					+ " | Budget=" + Math.Round(riskMoney, 2)
 					+ " | Risiko=" + Math.Round(useDist * pointValue * qty, 2)
-					+ " (" + Math.Round(useDist * pointValue * qty / CurrentEquity() * 100, 2) + "%)"
 					+ " | Ziel=" + targetLevel);
 		}
 
@@ -441,37 +394,23 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public bool EnableShort { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Risiko in % vom Konto", Description = "True (Standard): 1R = RiskPercent vom mitwachsenden Kontostand (Compounding). False: fester Betrag aus 'Risiko je Trade (fest)'.", Order = 18, GroupName = "03 Risiko")]
-		public bool UsePercentRisk { get; set; }
-
-		[NinjaScriptProperty]
-		[Range(100, 100000000)]
-		[Display(Name = "Startkapital", Description = "Ausgangskontostand in INSTRUMENTENWAEHRUNG. Sollte mit der Account-Groesse im Strategy Analyzer uebereinstimmen, damit die Prozentkennzahlen dort passen.", Order = 19, GroupName = "03 Risiko")]
-		public double StartingCapital { get; set; }
-
-		[NinjaScriptProperty]
-		[Range(0.01, 100)]
-		[Display(Name = "Risiko je Trade (%)", Description = "Anteil des aktuellen Kontostands, den ein Stopout kostet. Standard 1,0 %.", Order = 20, GroupName = "03 Risiko")]
-		public double RiskPercent { get; set; }
-
-		[NinjaScriptProperty]
 		[Range(1, 1000000)]
-		[Display(Name = "Risiko je Trade (fest)", Description = "Fester Geldbetrag je Stopout. Wird nur verwendet, wenn 'Risiko in % vom Konto' auf False steht.", Order = 21, GroupName = "03 Risiko")]
+		[Display(Name = "Risiko je Trade (1R)", Description = "Geldbetrag in INSTRUMENTENWAEHRUNG, den ein Stopout kostet. FDXS rechnet in EUR -> 100 = 100 EUR.", Order = 20, GroupName = "03 Risiko")]
 		public double RiskAmount { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(0.25, 20)]
-		[Display(Name = "R-Ziel (Reward-Multiple)", Description = "Take-Profit = Einstieg +/- Multiple x Stopdistanz. Standard 1. Das ist der Wert zum Durchtesten verschiedener R-Ziele.", Order = 22, GroupName = "03 Risiko")]
+		[Display(Name = "R-Ziel (Reward-Multiple)", Description = "Take-Profit = Einstieg +/- Multiple x Stopdistanz. Standard 1. Das ist der Wert zum Durchtesten verschiedener R-Ziele.", Order = 21, GroupName = "03 Risiko")]
 		public double RewardMultiple { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000)]
-		[Display(Name = "Max. Kontrakte", Description = "Obergrenze der berechneten Positionsgroesse. Greift bei sehr engen Stops.", Order = 23, GroupName = "03 Risiko")]
+		[Display(Name = "Max. Kontrakte", Description = "Obergrenze der berechneten Positionsgroesse. Greift bei sehr engen Stops.", Order = 22, GroupName = "03 Risiko")]
 		public int MaxContracts { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(0, 500)]
-		[Display(Name = "Mindest-Stopdistanz (Ticks)", Description = "Signale mit kleinerer Stopdistanz verwerfen. Wichtig, weil die Positionsgroesse invers zur Stopdistanz waechst: Ein 5-Punkte-Stop bedeutet 20 Kontrakte und damit den 20-fachen Kostenblock bei gleichem 1R. Standard 10. 0 = Filter aus.", Order = 24, GroupName = "03 Risiko")]
+		[Display(Name = "Mindest-Stopdistanz (Ticks)", Description = "Signale mit kleinerer Stopdistanz verwerfen. Wichtig, weil die Positionsgroesse invers zur Stopdistanz waechst: Ein 5-Punkte-Stop bedeutet 20 Kontrakte und damit den 20-fachen Kostenblock bei gleichem 1R. Standard 10. 0 = Filter aus.", Order = 23, GroupName = "03 Risiko")]
 		public int MinStopTicks { get; set; }
 
 		[NinjaScriptProperty]
