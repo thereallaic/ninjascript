@@ -10,7 +10,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningImmediate2R.cs` | OpeningImmediate2R | Wie oben, aber SOFORTIGER Einstieg direkt nach der 5. Kerze — kein Warten auf eine Signalkerze |
 | `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
 | `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
-| `Strategies/VolumeSpikeLong2R.cs` | VolumeSpikeLong2R | Eigenständiger Ansatz: Long-only 10:00–15:00, Einstieg auf grüner Kerze mit 1,5-fachem Volumen, festes Geldrisiko, 2R-Ziel |
+| `Strategies/VolumeSpikeEma50.cs` | VolumeSpikeEma50 | Eigenständiger Ansatz: Long **und** Short 09:00–22:00, Volumenausbruch (2×) mit EMA50-Richtungsfilter, Stop auf dem Candle-Open, frei einstellbares R-Ziel |
 
 ---
 
@@ -209,56 +209,75 @@ Alle Parameter entsprechen Variante 3, zusätzlich nur `UseStructuralStop`.
 
 ---
 
-## VolumeSpikeLong2R — Volumen-Ausbruch (eigenständiger Ansatz)
+## VolumeSpikeEma50 — Volumen-Ausbruch mit EMA50-Filter (eigenständiger Ansatz)
 
-Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch nach oben zeigt Käuferinteresse und läuft weiter.**
+Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch in Richtung des Trends läuft weiter.** Der EMA50 liefert die Trendrichtung, das Volumen den Auslöser.
 
-1. **Handelsfenster:** 10:00–15:00. Außerhalb passiert nichts.
-2. **Nur Long.**
-3. **Einstieg**, wenn eine Kerze beide Bedingungen erfüllt:
-   - Volumen ≥ **1,5 ×** Durchschnittsvolumen der letzten 20 Kerzen
-   - **Grüne** Kerze (Close > Open)
-4. **Risiko/Ziel:** Ein Stopout kostet genau **100 €**, das Ziel liegt bei **2R = 200 €**.
-5. Immer nur **eine Position gleichzeitig** — Signale während einer offenen Position werden ignoriert.
-6. Offene Position wird um **15:00 glattgestellt**.
+1. **Handelsfenster:** 09:00–22:00. Außerhalb passiert nichts.
+2. **Signalkerze:** Volumen ≥ **2,0 ×** Durchschnittsvolumen der 20 vorhergehenden Kerzen.
+3. **Richtung:** Close **über** EMA50 → Long · Close **unter** EMA50 → Short.
+4. **Stop = Open der Signalkerze.**
+5. **Positionsgröße** so, dass ein Stopout ungefähr **100 €** kostet.
+6. **Ziel = `RewardMultiple` × Stopdistanz** — der frei einstellbare R-Wert, Standard 1.
+7. Immer nur **eine Position gleichzeitig**. Offene Position wird um **22:00 glattgestellt**.
 
-### Wie das feste Geldrisiko hier funktioniert
+### Positionsgröße und der Kappungsfall
 
-Anders als bei den Opening-Varianten ist hier die **Kontraktzahl fix** (1) und stattdessen die **Stopdistanz** variabel:
+Hier ist die **Stopdistanz durch die Kerze vorgegeben** und die **Kontraktzahl wird berechnet** — umgekehrt zur Vorgängerversion:
 
 ```
-Stopdistanz = RiskAmount / (PointValue × Kontrakte)
-Zieldistanz = RewardMultiple × Stopdistanz
+Stopdistanz = |Close der Signalkerze − Open der Signalkerze|
+Kontrakte   = abrunden( RiskAmount / (Stopdistanz × PointValue) )
 ```
 
-Bei FDXS (1 Punkt = 1 €) und 1 Kontrakt sind das **100 Punkte Stop und 200 Punkte Ziel**. Nach dem Fill werden beide Level auf den tatsächlichen Einstiegskurs nachgerechnet, damit das Risiko exakt 100 € bleibt.
+Abgerundet wird bewusst: Das Risiko liegt damit nie *über* 100 €, bei weiten Stops aber spürbar darunter. Beispiele für FDXS (1 Punkt = 1 €):
 
-> **⚠️ 200 Punkte Zieldistanz sind beim DAX sehr viel.** Bei Kursen um 26.000 entspricht das rund 0,77 %; die typische Tagesrange liegt bei 200–400 Punkten. Innerhalb des Fensters bis 15:00 wird das Ziel deshalb **selten** erreicht, und der Zeit-Exit dürfte den Großteil der Trades beenden. Damit gibt es **drei** Ausgänge statt zwei: +2R, −1R und „Zeit-Exit irgendwo dazwischen".
->
-> Prüfe im Trades-Tab, wie viele Trades auf `TimeExit` laufen. Ist das die Mehrheit, misst der Backtest nicht mehr dein 2R-Setup, sondern nur noch die durchschnittliche Kursbewegung bis 15:00. Zwei Auswege:
-> - **`RiskAmount` senken** auf 30–50 (= 60–100 Punkte Zieldistanz) — dann wird 2R im Fenster erreichbar.
-> - **`CloseAtWindowEnd = false`** — die Position läuft dann bis Stop oder Ziel, notfalls bis zum Sessionende. Sauberes 2R-Profil, aber die Position hängt über das Fenster hinaus im Markt.
+| Signalkerze | Stopdistanz | Kontrakte | Risiko | Stop liegt auf |
+|---|---|---|---|---|
+| Open 26250 → Close 26270 | 20 Pkt | 5 | 100 € | Candle-Open |
+| Open 26250 → Close 26256 | 6 Pkt | 16 | 96 € | Candle-Open |
+| Open 26100 → Close 26250 | 150 Pkt | 1 *(gekappt)* | 100 € | 100 Pkt unter Entry |
+
+**Kappungsfall:** Ist die Stopdistanz so groß, dass selbst 1 Kontrakt mehr als 100 € riskieren würde, wird 1 Kontrakt gehandelt und der Stop auf genau 100 € **herangezogen**. Er liegt dann nicht mehr auf dem Candle-Open, sondern auf dem Geldlimit — aus einem strukturellen wird ein geldbasierter Stop. Das Debug-Log markiert diese Trades mit `GEKAPPT`, damit du siehst, wie oft es passiert.
+
+### Zwei Konsequenzen der Regeln, die du kennen solltest
+
+**Der Stop auf dem Candle-Open erzwingt implizit die Kerzenfarbe.** Bei Long muss der Stop unter dem Einstieg liegen, also Open < Close → grüne Kerze. Eine rote Kerze über dem EMA50 mit 2× Volumen hätte ihren Stop *über* dem Einstieg und wird deshalb übersprungen (Debug-Log: „Stop auf falscher Seite"). Long handelt faktisch nur grüne Kerzen, Short nur rote.
+
+> **⚠️ Kerzen mit winzigem Körper.** Schließt eine Signalkerze nur 1–2 Punkte über ihrem Open, ist die Stopdistanz 1–2 Punkte — die Positionsgröße schießt auf das `MaxContracts`-Limit hoch und der Stop wird fast garantiert sofort getroffen. Solche Trades verzerren die Statistik massiv. `MinStopTicks` ist standardmäßig **aus** (0), damit die Regeln unverfälscht laufen. Prüfe nach dem ersten Durchlauf die Stopdistanzen im Trades-Tab; häufen sich Werte unter ~5 Punkten, setz `MinStopTicks` auf 5–10.
 
 ### Parameter
 
 | Parameter | Default | Bedeutung |
 |---|---|---|
-| `StartHour` / `StartMinute` | 10 / 0 | Beginn des Handelsfensters |
-| `EndHour` / `EndMinute` | 15 / 0 | Ende — danach keine neuen Einstiege |
-| `CloseAtWindowEnd` | true | Offene Position um 15:00 schließen · false = bis Stop/Ziel laufen lassen |
-| `VolumeMultiple` | 1.5 | Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch zählt |
+| `StartHour` / `StartMinute` | 9 / 0 | Beginn des Handelsfensters |
+| `EndHour` / `EndMinute` | 22 / 0 | Ende — danach keine neuen Einstiege |
+| `CloseAtWindowEnd` | true | Offene Position um 22:00 schließen · false = bis Stop/Ziel laufen lassen |
+| `EmaPeriod` | 50 | Periode des Richtungsfilters |
+| `VolumeMultiple` | 2.0 | Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch zählt |
 | `VolumeLookback` | 20 | Anzahl Kerzen für den Durchschnitt — **ohne** die aktuelle Kerze |
+| `EnableLong` / `EnableShort` | true / true | Richtungen einzeln abschaltbar, um sie isoliert zu testen |
 | `RiskAmount` | 100 | Geldrisiko je Trade (1R) in Instrumentenwährung (EUR bei FDXS) |
-| `RewardMultiple` | **2** | Take-Profit in R — bei 100 € Risiko und 1 Kontrakt: 200 Punkte Zieldistanz |
-| `Contracts` | 1 | Feste Positionsgröße |
+| `RewardMultiple` | **1** | **Der R-Wert zum Durchtesten.** Ziel = Multiple × Stopdistanz |
+| `MaxContracts` | 50 | Obergrenze der berechneten Positionsgröße |
+| `MinStopTicks` | 0 (aus) | Signale mit kleinerer Stopdistanz verwerfen — siehe Warnung oben |
 | `MaxTradesPerDay` | 0 | 0 = unbegrenzt |
-| `EnableDebugLog` | false | Loggt jedes Signal mit Volumenverhältnis, jeden Fill und jeden Zeit-Exit |
+| `EnableDebugLog` | false | Loggt Signal, Volumenverhältnis, EMA, Stopdistanz, Risiko, Kappung, Fill und Zeit-Exit |
 
 ### Details, die das Ergebnis beeinflussen
 
-- **Der Durchschnitt schließt die Signalkerze aus** (`SMA(Volume, 20)[1]`). Sonst würde eine Volumenspitze ihren eigenen Schwellwert nach oben ziehen und das Signal systematisch abschwächen.
-- **Zeitstempel-Logik:** Die Kerze, die um 10:00 schließt, enthält noch Daten von vor 10:00 und zählt deshalb nicht zum Fenster. Erste mögliche Signalkerze schließt um 10:01.
-- **Timeframe:** Auf 1-Minuten-Kerzen ausgelegt wie die anderen Strategien, funktioniert aber auf jedem Bar-Typ — der Volumen-Durchschnitt ist relativ. Auf 5-Minuten-Kerzen ist `VolumeLookback = 20` allerdings ein deutlich längerer Zeitraum, das beim Vergleich bedenken.
+- **Der Volumen-Durchschnitt schließt die Signalkerze aus** (`SMA(Volume, 20)[1]`). Sonst würde eine Volumenspitze ihren eigenen Schwellwert nach oben ziehen und das Signal systematisch abschwächen.
+- **„Über dem EMA50" ist als Close > EMA50 umgesetzt** — nicht als „gesamte Kerze inklusive Docht oberhalb".
+- **Zeitstempel-Logik:** Die Kerze, die um 09:00 schließt, enthält noch Daten von vor 09:00 und zählt nicht zum Fenster. Erste mögliche Signalkerze schließt um 09:01.
+- **Nachrechnung nach dem Fill:** Im Normalfall bleibt der Stop auf dem Candle-Open (absoluter Level), das Ziel wird aus dem tatsächlichen Fill-Abstand berechnet. Im Kappungsfall behält der Stop seinen Geldabstand zum Fill, damit das Risiko exakt 100 € bleibt.
+- **Timeframe:** explizit für 1-Minuten-Kerzen. Bei anderer Bar-Größe warnt die Strategie im Log.
+
+### R-Werte durchtesten
+
+`RewardMultiple` ist der Parameter dafür. Im Strategy Analyzer über **Optimize** einen Sweep von z. B. 0,5 bis 4 in 0,5er-Schritten laufen lassen. Zwei Hinweise dazu:
+
+- Der Sweep zeigt dir die **Form** der Kurve über R. Ein sauberes Plateau (mehrere benachbarte Werte funktionieren) ist ein gutes Zeichen, ein einzelner Ausreißer ist Rauschen.
+- Den besten Wert aus dem Sweep zu nehmen **ist bereits Optimierung auf diese Daten**. Was dabei herauskommt, gehört auf dem Holdout-Zeitraum gegengeprüft, bevor du ihm glaubst.
 
 ---
 
