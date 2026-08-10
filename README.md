@@ -223,24 +223,47 @@ Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch in Richtung 
 
 > **Sperrzeiten:** Die Vorgabe „keine Trades von 09:00 bis 12:00" ist über den **Fensterstart** abgebildet (`StartHour = 12`), nicht über eine eigene Blackout-Mechanik — bei einem Fenster, das ohnehin um 09:00 beginnen würde, ist beides identisch. Der Freitagsfilter (`TradeFriday = false`) sperrt nur **neue Einstiege**; er steht im Code nach der Glattstellungs-Logik, damit eine offene Position in jedem Fall regulär beendet würde.
 
+### Risikobudget: 1 % vom mitwachsenden Konto
+
+Das Risiko je Trade ist **prozentual an den Kontostand gekoppelt** und wächst bzw. schrumpft mit ihm:
+
+```
+Equity  = StartingCapital + realisierte Performance der Strategie
+Budget  = Equity × RiskPercent / 100
+```
+
+Bei 10.000 Start und 1 % ist der erste Trade also **100 €** — identisch zum bisherigen Festbetrag, danach compoundet es. Bei 12.000 sind es 120 €, bei 8.000 nur noch 80 €.
+
+Als Equity dient bewusst `StartingCapital + SystemPerformance…CumProfit` und **nicht** `Account.Get(AccountItem.CashValue)`: Der Account-Zugriff ist im Strategy Analyzer nicht verlässlich, die SystemPerformance funktioniert in Backtest und Realtime identisch. Unrealisierte Gewinne der offenen Position zählen nicht mit — gesized wird ohnehin nur im flachen Zustand.
+
+> **Stell die Account-Größe im Strategy Analyzer ebenfalls auf 10.000**, sonst passen dessen Prozentkennzahlen (Return, Drawdown %) nicht zur internen Rechnung der Strategie.
+
+Über `UsePercentRisk = false` schaltest du auf den festen Betrag aus `RiskAmount` zurück.
+
 ### Positionsgröße und der Kappungsfall
 
-Hier ist die **Stopdistanz durch die Kerze vorgegeben** und die **Kontraktzahl wird berechnet** — umgekehrt zur Vorgängerversion:
+Die **Stopdistanz ist durch die Kerze vorgegeben**, die **Kontraktzahl wird daraus berechnet**:
 
 ```
 Stopdistanz = |Close der Signalkerze − Open der Signalkerze|
-Kontrakte   = abrunden( RiskAmount / (Stopdistanz × PointValue) )
+Kontrakte   = abrunden( Budget / (Stopdistanz × PointValue) )
 ```
 
-Abgerundet wird bewusst: Das Risiko liegt damit nie *über* 100 €, bei weiten Stops aber spürbar darunter. Beispiele für FDXS (1 Punkt = 1 €):
+Abgerundet wird bewusst: Das Risiko liegt damit nie *über* dem Budget, bei weiten Stops aber spürbar darunter. Beispiele für FDXS (1 Punkt = 1 €) bei 10.000 Equity, Budget 100 €:
 
-| Signalkerze | Stopdistanz | Kontrakte | Risiko | Stop liegt auf |
-|---|---|---|---|---|
-| Open 26250 → Close 26270 | 20 Pkt | 5 | 100 € | Candle-Open |
-| Open 26250 → Close 26256 | 6 Pkt | 16 | 96 € | Candle-Open |
-| Open 26100 → Close 26250 | 150 Pkt | 1 *(gekappt)* | 100 € | 100 Pkt unter Entry |
+| Signalkerze | Stopdistanz | Kontrakte | Risiko | effektiv | Stop liegt auf |
+|---|---|---|---|---|---|
+| Open 26250 → Close 26270 | 20 Pkt | 5 | 100 € | 1,00 % | Candle-Open |
+| Open 26250 → Close 26256 | 6 Pkt | 16 | 96 € | 0,96 % | Candle-Open |
+| Open 26250 → Close 26290 | 40 Pkt | 2 | 80 € | 0,80 % | Candle-Open |
+| Open 26250 → Close 26301 | 51 Pkt | 1 | 51 € | 0,51 % | Candle-Open |
+| Open 26100 → Close 26250 | 150 Pkt | 1 *(gekappt)* | 100 € | 1,00 % | 100 Pkt unter Entry |
 
-**Kappungsfall:** Ist die Stopdistanz so groß, dass selbst 1 Kontrakt mehr als 100 € riskieren würde, wird 1 Kontrakt gehandelt und der Stop auf genau 100 € **herangezogen**. Er liegt dann nicht mehr auf dem Candle-Open, sondern auf dem Geldlimit — aus einem strukturellen wird ein geldbasierter Stop. Das Debug-Log markiert diese Trades mit `GEKAPPT`, damit du siehst, wie oft es passiert.
+**Die Abrundung macht 1 % zur Obergrenze, nicht zum Zielwert.** Bei kleinem Konto und weiten Stops liegt das tatsächliche Risiko regelmäßig darunter — im Extremfall bei gut der Hälfte, wenn `Budget / Stopdistanz` knapp unter 2 fällt. Das Debug-Log gibt bei jedem Trade das effektive Prozent aus. Mit wachsendem Konto wird die Abstufung feiner und der Effekt verschwindet weitgehend.
+
+**Kappungsfall:** Ist die Stopdistanz so groß, dass selbst 1 Kontrakt mehr als das Budget riskieren würde, wird 1 Kontrakt gehandelt und der Stop auf genau das Budget **herangezogen**. Er liegt dann nicht mehr auf dem Candle-Open, sondern auf dem Geldlimit — aus einem strukturellen wird ein geldbasierter Stop. Das Debug-Log markiert diese Trades mit `GEKAPPT`.
+
+> **⚠️ `MaxContracts` bremst bei wachsendem Konto.** Die Grenze von 50 Kontrakten greift, sobald `Budget / Stopdistanz > 50` wird — bei `MinStopTicks = 10` also ab rund **50.000 € Equity**. Ab da riskiert die Strategie stillschweigend weniger als 1 %, und die Compounding-Kurve flacht künstlich ab. Wenn dein Backtest so weit wächst, `MaxContracts` entsprechend hochsetzen — oder bewusst dort belassen, wenn 50 Micro-Kontrakte deine realistische Liquiditätsgrenze sind.
 
 ### Zwei Konsequenzen der Regeln, die du kennen solltest
 
@@ -278,7 +301,10 @@ Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen
 | `VolumeMultiple` | 2.0 | Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch zählt |
 | `VolumeLookback` | 20 | Anzahl Kerzen für den Durchschnitt — **ohne** die aktuelle Kerze |
 | `EnableLong` / `EnableShort` | true / true | Richtungen einzeln abschaltbar, um sie isoliert zu testen |
-| `RiskAmount` | 100 | Geldrisiko je Trade (1R) in Instrumentenwährung (EUR bei FDXS) |
+| `UsePercentRisk` | **true** | 1R = Prozent vom mitwachsenden Konto · false = fester Betrag |
+| `StartingCapital` | **10000** | Ausgangskontostand — mit der Account-Größe im Analyzer abgleichen |
+| `RiskPercent` | **1.0** | Anteil des Kontostands je Stopout |
+| `RiskAmount` | 100 | Fester Geldbetrag — nur aktiv wenn `UsePercentRisk = false` |
 | `RewardMultiple` | **1** | **Der R-Wert zum Durchtesten.** Ziel = Multiple × Stopdistanz |
 | `MaxContracts` | 50 | Obergrenze der berechneten Positionsgröße |
 | `MinStopTicks` | **10** | Signale mit kleinerer Stopdistanz verwerfen — siehe Kostenrechnung oben. 0 = aus |
@@ -290,6 +316,8 @@ Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen
 - **Der Volumen-Durchschnitt schließt die Signalkerze aus** (`SMA(Volume, 20)[1]`). Sonst würde eine Volumenspitze ihren eigenen Schwellwert nach oben ziehen und das Signal systematisch abschwächen.
 - **„Über dem EMA50" ist als Close > EMA50 umgesetzt** — nicht als „gesamte Kerze inklusive Docht oberhalb".
 - **Zeitstempel-Logik:** Die Kerze, die um 12:00 schließt, enthält noch Daten von vor 12:00 und zählt nicht zum Fenster. Erste mögliche Signalkerze schließt um 12:01.
+- **Compounding verändert die Auswertung.** Mit prozentualem Risiko wird das Ergebnis **pfadabhängig**: Ein früher Gewinn vergrößert alle folgenden Positionen, ein früher Verlust verkleinert sie. Dieselben Trades in anderer Reihenfolge ergeben ein anderes Endkapital. Net Profit wird dadurch exponentiell und reagiert stark auf Zufälle am Anfang der Kurve. Für den **Vergleich** der Strategien ist festes Risiko (`UsePercentRisk = false`) deshalb aussagekräftiger — Profit Factor und Erwartung pro Trade in R bleiben dann sauber vergleichbar. Für die **Simulation der realen Kontoentwicklung** ist das prozentuale Risiko das richtige. Am besten beides laufen lassen: fest zum Bewerten, prozentual zum Hochrechnen.
+- **Die anderen vier Strategien nutzen weiterhin festes Risiko** (100 € bzw. berechnete Kontraktzahl). Ein Vergleich des Net Profit zwischen ihnen und dieser Strategie ist damit nicht direkt möglich — entweder hier `UsePercentRisk = false` setzen oder die Prozentlogik dort ebenfalls einbauen.
 - **Stichprobengröße:** Die beiden Sperren zusammen kosten spürbar Handelszeit — der Freitag rund 20 % der Tage, das Fenster 09:00–12:00 die volumenstärkste Phase des europäischen Handelstags. Rechne mit deutlich weniger Signalen als vorher und prüfe im Ergebnis zuerst die **Anzahl der Trades**, bevor du Kennzahlen wie Profit Factor interpretierst.
 - **Nachrechnung nach dem Fill:** Im Normalfall bleibt der Stop auf dem Candle-Open (absoluter Level), das Ziel wird aus dem tatsächlichen Fill-Abstand berechnet. Im Kappungsfall behält der Stop seinen Geldabstand zum Fill, damit das Risiko exakt 100 € bleibt.
 - **Timeframe:** explizit für 1-Minuten-Kerzen. Bei anderer Bar-Größe warnt die Strategie im Log.
