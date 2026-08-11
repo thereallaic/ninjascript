@@ -38,7 +38,10 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //  3. LONG  wenn zusaetzlich Close > EMA50.
 //     SHORT wenn zusaetzlich Close < EMA50.
 //     Market-Order beim Schluss der Signalkerze -> Fill zum Open der Folgekerze.
-//  3b. KERZENFORM-FILTER (UseCandleShapeFilter, Standard an): Ist der Ablehnungsdocht
+//  3b. EMA-DURCHBRUCH-FILTER (UseEmaCrossFilter, Standard an): Quert die Signalkerze
+//     den EMA — Close auf der Handelsseite, Open noch jenseits —, wird sie verworfen.
+//     Der Open muss bereits auf derselben Seite liegen wie der Close.
+//  3c. KERZENFORM-FILTER (UseCandleShapeFilter, Standard an): Ist der Ablehnungsdocht
 //     laenger als MaxWickToBodyRatio (Standard 2,0) mal der Kerzenkoerper, wird das
 //     Signal verworfen. Ablehnungsdocht = der Docht GEGEN die Handelsrichtung:
 //     bei Long oben (High - Close), bei Short unten (Close - Low).
@@ -121,6 +124,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				VolumeLookback   = 20;
 				UseCandleShapeFilter = true;
 				MaxWickToBodyRatio   = 2.0;  // Docht > 2 x Body -> kein Trade
+				UseEmaCrossFilter    = true; // Kerzen, die den EMA queren, ausschliessen
 				RiskAmount       = 100;
 				RewardMultiple   = 1;      // frei einstellbarer R-Wert
 				MaxContracts     = 50;
@@ -220,6 +224,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (EnableDebugLog)
 					Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " VSE: Signal verworfen — Tageslimit erreicht (" + tradesToday + ")");
 				return;
+			}
+
+			// ---------- EMA-Durchbruch-Filter ----------
+			// Verworfen wird, wenn die Signalkerze den EMA DURCHQUERT: Der Close liegt auf
+			// der Handelsseite, der Open lag aber noch jenseits der Linie.
+			// Referenz ist fuer Open und Close derselbe EMA-Wert dieser Kerze (ema[0]) —
+			// also genau das, was man im Chart sieht: Die Linie laeuft durch den Koerper.
+			//
+			// Bei solchen Kerzen ist die Richtungsaussage des EMA am schwaechsten (der Kurs
+			// steht praktisch auf der Linie), und der Einstieg zum Close laeuft der
+			// Bewegung hinterher, die innerhalb der Kerze schon stattgefunden hat.
+			if (UseEmaCrossFilter)
+			{
+				bool crossesEma = goLong ? Open[0] < ema[0] : Open[0] > ema[0];
+				if (crossesEma)
+				{
+					if (EnableDebugLog)
+						Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " VSE: Signal verworfen — Kerze quert den EMA (Open "
+							+ Open[0] + " / EMA " + Math.Round(ema[0], 1) + " / Close " + Close[0] + ")");
+					return;
+				}
 			}
 
 			// ---------- Kerzenform-Filter ----------
@@ -431,6 +456,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Range(0.1, 20)]
 		[Display(Name = "Max. Docht/Body-Verhaeltnis", Description = "Wie lang der Ablehnungsdocht hoechstens sein darf, als Vielfaches des Kerzenkoerpers. Bei Long zaehlt der obere Docht (High - Close), bei Short der untere (Close - Low). Standard 2,0: Docht laenger als das Doppelte des Koerpers -> kein Trade. Kleinere Werte filtern strenger.", Order = 16, GroupName = "02 Signal")]
 		public double MaxWickToBodyRatio { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "EMA-Durchbruch ausschliessen", Description = "True (Standard): Kerzen, die den EMA durchqueren (Open jenseits, Close diesseits), erzeugen kein Signal. Der Open muss bereits auf derselben Seite liegen wie der Close.", Order = 17, GroupName = "02 Signal")]
+		public bool UseEmaCrossFilter { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000000)]

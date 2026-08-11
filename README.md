@@ -216,13 +216,35 @@ Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch in Richtung 
 1. **Handelsfenster:** 12:00–22:00, **Montag bis Donnerstag**. Außerhalb passiert nichts.
 2. **Signalkerze:** Volumen ≥ **2,0 ×** Durchschnittsvolumen der 20 vorhergehenden Kerzen.
 3. **Richtung:** Close **über** EMA50 → Long · Close **unter** EMA50 → Short.
-4. **Kerzenform:** Ablehnungsdocht darf höchstens **2 ×** so lang sein wie der Körper — sonst kein Trade.
-5. **Stop = Open der Signalkerze.**
-6. **Positionsgröße** so, dass ein Stopout ungefähr **100 €** kostet.
-7. **Ziel = `RewardMultiple` × Stopdistanz** — der frei einstellbare R-Wert, Standard 1.
-8. Immer nur **eine Position gleichzeitig**. Offene Position wird um **22:00 glattgestellt**.
+4. **Kein EMA-Durchbruch:** Der Open muss bereits auf derselben Seite des EMA50 liegen wie der Close — quert die Kerze die Linie, kein Trade.
+5. **Kerzenform:** Ablehnungsdocht darf höchstens **2 ×** so lang sein wie der Körper — sonst kein Trade.
+6. **Stop = Open der Signalkerze.**
+7. **Positionsgröße** so, dass ein Stopout ungefähr **100 €** kostet.
+8. **Ziel = `RewardMultiple` × Stopdistanz** — der frei einstellbare R-Wert, Standard 1.
+9. Immer nur **eine Position gleichzeitig**. Offene Position wird um **22:00 glattgestellt**.
 
 > **Sperrzeiten:** Die Vorgabe „keine Trades von 09:00 bis 12:00" ist über den **Fensterstart** abgebildet (`StartHour = 12`), nicht über eine eigene Blackout-Mechanik — bei einem Fenster, das ohnehin um 09:00 beginnen würde, ist beides identisch. Der Freitagsfilter (`TradeFriday = false`) sperrt nur **neue Einstiege**; er steht im Code nach der Glattstellungs-Logik, damit eine offene Position in jedem Fall regulär beendet würde.
+
+### EMA-Durchbruch-Filter
+
+Verworfen wird ein Signal, wenn die Kerze den EMA50 **durchquert** — der Close liegt auf der Handelsseite, der Open lag aber noch jenseits:
+
+```
+Long:   Open ≥ EMA50 nötig   (Open < EMA50 → verworfen)
+Short:  Open ≤ EMA50 nötig   (Open > EMA50 → verworfen)
+```
+
+Referenz ist für Open und Close derselbe EMA-Wert dieser Kerze (`ema[0]`) — also genau das, was man im Chart sieht: Die Linie verläuft durch den Kerzenkörper.
+
+| Signalkerze (Long, EMA50 = 26260) | Open | Close | Ergebnis |
+|---|---|---|---|
+| komplett über der Linie | 26265 | 26280 | ✅ Trade |
+| Open exakt auf der Linie | 26260 | 26275 | ✅ Trade |
+| quert die Linie von unten | 26250 | 26275 | ❌ verworfen |
+
+**Warum das sinnvoll ist:** Genau bei diesen Kerzen ist die Richtungsaussage des EMA am schwächsten — der Kurs steht praktisch auf der Linie und kann in beide Richtungen kippen. Dazu kommt, dass der Einstieg zum Close der Bewegung hinterherläuft, die innerhalb der Kerze bereits stattgefunden hat.
+
+**Was du dabei aufgibst:** Das ist zugleich die klassische „Ausbruch durch den gleitenden Durchschnitt"-Kerze — für eine Momentum-Strategie eigentlich das prominenteste Signal. Der Filter entfernt also nicht nur Rauschen, sondern eine ganze Signalklasse. `UseEmaCrossFilter = false` schaltet ihn ab; ein Vergleichslauf mit und ohne zeigt dir, ob diese Kerzen an deinem Instrument tatsächlich schlechter laufen.
 
 ### Kerzenform-Filter
 
@@ -302,6 +324,7 @@ Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen
 | `VolumeMultiple` | 2.0 | Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch zählt |
 | `UseCandleShapeFilter` | **true** | Kerzenform-Filter ein/aus |
 | `MaxWickToBodyRatio` | **2.0** | Max. Länge des Ablehnungsdochts als Vielfaches des Körpers |
+| `UseEmaCrossFilter` | **true** | Kerzen, die den EMA50 durchqueren, erzeugen kein Signal |
 | `VolumeLookback` | 20 | Anzahl Kerzen für den Durchschnitt — **ohne** die aktuelle Kerze |
 | `EnableLong` / `EnableShort` | true / true | Richtungen einzeln abschaltbar, um sie isoliert zu testen |
 | `RiskAmount` | 100 | Geldrisiko je Trade (1R) in Instrumentenwährung (EUR bei FDXS) |
