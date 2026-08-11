@@ -266,44 +266,6 @@ Abgerundet wird bewusst: Das Risiko liegt damit nie *über* 100 €, bei weiten 
 
 **Kappungsfall:** Ist die Stopdistanz so groß, dass selbst 1 Kontrakt mehr als 100 € riskieren würde, wird 1 Kontrakt gehandelt und der Stop auf genau 100 € **herangezogen**. Er liegt dann nicht mehr auf dem Candle-Open, sondern auf dem Geldlimit — aus einem strukturellen wird ein geldbasierter Stop. Das Debug-Log markiert diese Trades mit `GEKAPPT`, damit du siehst, wie oft es passiert.
 
-### Trailing-Stop
-
-Erreicht der Buchgewinn `TrailTriggerR`, springt der Stop auf `TrailOffsetR` (gemessen in R ab Einstieg). Standard: **bei 1R → Break-even**. Der Stop wandert dabei ausschließlich in Gewinnrichtung, nie zurück.
-
-| Parameter | Default | Bedeutung |
-|---|---|---|
-| `UseTrailStop` | true | Nachziehen ein/aus |
-| `TrailTriggerR` | 1.0 | Ab welchem Buchgewinn in R nachgezogen wird |
-| `TrailOffsetR` | 0.0 | Wohin der Stop springt, in R ab Einstieg. **0 = Break-even**, 0,1 = knapp im Gewinn (deckt Kosten), negativ = nur näher heran |
-| `ContinuousTrail` | false | false = einmaliger Sprung · true = folgt danach dem Hoch/Tief mit konstantem Abstand (`TrailTriggerR − TrailOffsetR`) |
-| `UseIntrabarTrail` | **true** | true = tickgenaues Nachziehen über eine Zusatz-Datenserie · false = erst beim 1-Min-Kerzenschluss |
-| `IntrabarTicks` | 1 | Ticks je Bar der Zusatzserie. 1 = jeder Tick · 10–50 = deutlich schneller |
-
-> **⚠️ Mit den aktuellen Defaults greift der Trailing-Stop NIE.** `RewardMultiple = 1` und `TrailTriggerR = 1` liegen auf demselben Kursniveau — der Take-Profit ist eine Limit-Order und füllt dort zuerst, die Position ist weg, bevor der Stop nachgezogen werden kann. Die Strategie schreibt beim Start eine entsprechende Warnung ins **Log**-Tab.
->
-> Die klassische Kombination ist **Ziel 2R, Ausloeser 1R**: `RewardMultiple = 2`, `TrailTriggerR = 1`, `TrailOffsetR = 0`. Alternativ den Auslöser unter das Ziel legen, z. B. `TrailTriggerR = 0.5` bei 1R-Ziel. Ich habe `RewardMultiple` bewusst auf 1 gelassen, weil du das so vorgegeben hattest — die Entscheidung liegt bei dir.
-
-**Break-even ist nicht kostenneutral.** Bei einem Stop exakt auf dem Einstieg zahlst du trotzdem Kommission und Slippage, der Trade endet also leicht negativ. `TrailOffsetR = 0.1` legt den Stop knapp darüber und deckt die Kosten — bei 20 Punkten R sind das 2 Punkte.
-
-#### Tickgenaues Nachziehen (`UseIntrabarTrail`)
-
-Der Stop wird standardmäßig **tickgenau** nachgezogen — ohne dass die Einstiegslogik davon berührt wird. Das läuft über zwei Datenserien:
-
-| Serie | `BarsInProgress` | Aufgabe |
-|---|---|---|
-| 1 Minute (primär) | 0 | EMA, Volumen, Signale, Einstiege — **unverändert** |
-| 1 Tick (`AddDataSeries`) | 1 | ausschließlich Trailing-Stop |
-
-`Calculate` bleibt auf `OnBarClose`. Auf einer 1-Tick-Serie bedeutet „Bar-Schluss" aber genau *ein Tick* — der Trail-Handler feuert damit bei jedem Kurswechsel, während die Signallogik weiterhin nur einmal pro Minute rechnet. Die Tick-Serie löst nie einen Einstieg aus; die Backtest-Ergebnisse der Einstiege bleiben deshalb exakt vergleichbar mit vorher.
-
-> **⚠️ Das erfordert historische Tickdaten.** NinjaTrader muss für den gesamten Testzeitraum Tick-Historie laden. Zwei praktische Folgen:
-> - **Nicht jeder Datenanbieter liefert das.** IQFeed ja, Interactive Brokers praktisch nicht. Wenn dein Anbieter keine Tick-Historie für FDXS hat, bricht der Backtest ab oder liefert keine Trades — dann `UseIntrabarTrail = false` setzen.
-> - **Der Backtest wird deutlich langsamer.** Ein Monat FDXS auf 1-Tick sind Millionen von Bars. Über `IntrabarTicks` kannst du gröber werden: 10 oder 50 Ticks pro Bar beschleunigen den Lauf erheblich, bei kaum schlechterer Stop-Platzierung. Für den ersten Durchlauf würde ich mit `IntrabarTicks = 10` anfangen.
-
-**Fallback ohne Tickdaten (`UseIntrabarTrail = false`):** Der Auslöser wird am **High/Low der abgeschlossenen 1-Min-Kerze** geprüft, der Stop aber erst nach Kerzenschluss verschoben — später, als ein echter Trailing-Stop reagieren würde. Läuft der Kurs innerhalb einer Kerze weit vor und kommt zurück, wird der Stop auf knapp unter den Schlusskurs begrenzt (Debug-Log: „auf Marktnähe begrenzt"), weil eine Stop-Order jenseits des Marktes sofort auslösen würde. Der Backtest ist an dieser Stelle eher **pessimistisch** als zu optimistisch.
-
-Das Debug-Log kennzeichnet jede Stop-Verschiebung mit `intrabar` bzw. `Kerzenschluss` — so siehst du direkt, welcher Modus aktiv war. Ein Vergleichslauf beider Modi zeigt dir, wie viel die Ungenauigkeit tatsächlich ausmacht.
-
 ### Zwei Konsequenzen der Regeln, die du kennen solltest
 
 **Der Stop auf dem Candle-Open erzwingt implizit die Kerzenfarbe.** Bei Long muss der Stop unter dem Einstieg liegen, also Open < Close → grüne Kerze. Eine rote Kerze über dem EMA50 mit 2× Volumen hätte ihren Stop *über* dem Einstieg und wird deshalb übersprungen (Debug-Log: „Stop auf falscher Seite"). Long handelt faktisch nur grüne Kerzen, Short nur rote.

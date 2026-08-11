@@ -58,17 +58,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //     Diese Trades werden im Debug-Log als "gekappt" markiert.
 //  7. Take-Profit = Einstieg +/- RewardMultiple x tatsaechliche Stopdistanz.
 //     RewardMultiple ist der frei einstellbare R-Wert (Standard 1).
-//  8. TRAILING-STOP (UseTrailStop, Standard an): Erreicht der Buchgewinn TrailTriggerR
-//     (Standard 1R), springt der Stop auf TrailOffsetR ab Einstieg (Standard 0 =
-//     Break-even). Mit ContinuousTrail folgt er danach dem Hoch/Tief mit konstantem
-//     Abstand weiter. Der Stop wandert nur in Gewinnrichtung, nie zurueck.
-//     Mit UseIntrabarTrail (Standard an) laeuft das ueber eine zusaetzliche TICK-SERIE
-//     und damit tickgenau. Die Signallogik bleibt dabei unveraendert auf der
-//     1-Minuten-Serie — die Tick-Serie loest niemals Einstiege aus.
-//     Achtung: Das erfordert historische TICKDATEN und verlangsamt den Backtest stark.
-//     Ohne Tickdaten UseIntrabarTrail = false setzen, dann wird der Stop erst beim
-//     1-Min-Kerzenschluss nachgezogen (Naeherung ueber High/Low der Kerze).
-//  9. Immer nur eine Position gleichzeitig. Offene Position wird um 22:00
+//  8. Immer nur eine Position gleichzeitig. Offene Position wird um 22:00
 //     glattgestellt (CloseAtWindowEnd).
 //
 // Stop und Ziel werden nach dem Fill auf den TATSAECHLICHEN Einstiegskurs
@@ -93,14 +83,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double pendingStopLevel;   // absoluter Stop (Candle-Open) im Normalfall
 		private double pendingCapDistance; // Geldabstand im Kappungsfall
 		private bool   pendingIsCapped;
-
-		// Zustand der laufenden Position (fuer den Trailing-Stop)
-		private bool   activeIsLong;
-		private double activeEntryPrice;
-		private double activeRiskDistance; // 1R als Kursdistanz
-		private double activeStopLevel;    // aktuell gesetzter Stop
-		private double activeExtreme;      // bestes Kursextrem seit Einstieg
-		private bool   trailArmed;         // Trigger wurde bereits erreicht
 
 		protected override void OnStateChange()
 		{
@@ -143,25 +125,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				RewardMultiple   = 1;      // frei einstellbarer R-Wert
 				MaxContracts     = 50;
 				MinStopTicks     = 10;     // siehe Hinweis unten; 0 = Filter aus
-				UseTrailStop     = true;
-				TrailTriggerR    = 1.0;    // ab 1R Buchgewinn ...
-				TrailOffsetR     = 0.0;    // ... Stop auf Break-even (0R vom Einstieg)
-				ContinuousTrail  = false;  // true = danach mit gleichem Abstand weiter nachziehen
-				UseIntrabarTrail = true;   // Stop tickgenau nachziehen (braucht Tickdaten)
-				IntrabarTicks    = 1;      // Granularitaet der Zusatzserie
 				MaxTradesPerDay  = 0;      // 0 = unbegrenzt
 				EnableDebugLog   = false;
 			}
 			else if (State == State.Configure)
 			{
 				BarsRequiredToTrade = Math.Max(EmaPeriod, VolumeLookback) + 1;
-
-				// Zusatzserie NUR fuer den Trailing-Stop. Die Signallogik bleibt auf der
-				// 1-Minuten-Primaerserie (BarsInProgress 0) und aendert sich dadurch nicht.
-				// Bei Calculate.OnBarClose feuert eine 1-Tick-Serie einmal pro Tick — genau
-				// das brauchen wir, um den Stop intrabar nachzuziehen.
-				if (UseIntrabarTrail)
-					AddDataSeries(BarsPeriodType.Tick, IntrabarTicks);
 			}
 			else if (State == State.DataLoaded)
 			{
@@ -176,119 +145,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 						+ " (<= 0). Die Positionsgroesse laesst sich damit nicht berechnen, es werden KEINE Trades ausgefuehrt. "
 						+ "Point Value in Control Center -> Tools -> Instruments fuer " + Instrument.FullName + " pruefen (FDXS = 1).", LogLevel.Error);
 
-				// Liegt der Trail-Ausloeser auf oder hinter dem Take-Profit, fuellt das
-				// Ziel zuerst und der Stop wird nie nachgezogen — die Funktion waere wirkungslos.
-				if (UseTrailStop && TrailTriggerR >= RewardMultiple)
-					Log(Name + ": Trail-Ausloeser (" + TrailTriggerR + "R) liegt auf/hinter dem Take-Profit ("
-						+ RewardMultiple + "R). Das Ziel fuellt zuerst, der Trailing-Stop greift damit NIE. "
-						+ "Entweder 'R-Ziel' groesser waehlen (klassisch: Ziel 2R, Ausloeser 1R) oder den Ausloeser unter das Ziel setzen.", LogLevel.Warning);
-
 				if (EnableDebugLog)
 					Print(Name + ": Start — Instrument=" + Instrument.FullName
 						+ ", PointValue=" + Instrument.MasterInstrument.PointValue
 						+ ", TickSize=" + Instrument.MasterInstrument.TickSize
-						+ ", RiskAmount=" + RiskAmount + ", RewardMultiple=" + RewardMultiple
-						+ ", Trail=" + (UseTrailStop ? TrailTriggerR + "R -> " + TrailOffsetR + "R" + (ContinuousTrail ? " (fortlaufend)" : "") : "aus"));
+						+ ", RiskAmount=" + RiskAmount + ", RewardMultiple=" + RewardMultiple);
 			}
-		}
-
-		private void ResetTrailState()
-		{
-			activeRiskDistance = 0;
-			activeStopLevel    = 0;
-			activeEntryPrice   = 0;
-			activeExtreme      = 0;
-			trailArmed         = false;
-		}
-
-		// Kern des Trailing-Stops. Wird aus zwei Kontexten aufgerufen:
-		//   * UseIntrabarTrail = true : von der Tick-Serie, einmal pro Tick
-		//                               excursionPrice = referencePrice = Tickkurs
-		//   * UseIntrabarTrail = false: beim 1-Min-Kerzenschluss
-		//                               excursionPrice = High/Low, referencePrice = Close
-		//
-		// excursionPrice schreibt das Gewinnextrem fort, referencePrice ist der Kurs,
-		// jenseits dessen ein Stop sofort ausloesen wuerde.
-		private void UpdateTrail(double excursionPrice, double referencePrice)
-		{
-			if (!UseTrailStop)
-				return;
-
-			if (Position.MarketPosition == MarketPosition.Flat)
-			{
-				ResetTrailState();
-				return;
-			}
-
-			if (activeRiskDistance <= 0)
-				return;                                    // kein Fill-Kontext bekannt
-
-			double entry = Position.AveragePrice;
-
-			// Laufendes Gewinnextrem fortschreiben (ueber Kerzen- bzw. Tickgrenzen hinweg)
-			activeExtreme = activeIsLong
-				? Math.Max(activeExtreme, excursionPrice)
-				: Math.Min(activeExtreme, excursionPrice);
-
-			double mfeR = activeIsLong
-				? (activeExtreme - entry) / activeRiskDistance
-				: (entry - activeExtreme) / activeRiskDistance;
-
-			if (mfeR < TrailTriggerR)
-				return;                                    // Trigger noch nicht erreicht
-
-			// Ziel-Stop als R-Abstand vom Einstieg
-			double targetR = ContinuousTrail
-				? mfeR - (TrailTriggerR - TrailOffsetR)    // konstanter Abstand hinter dem Extrem
-				: TrailOffsetR;                            // einmaliger Sprung, Standard Break-even
-
-			double newStop = activeIsLong
-				? entry + targetR * activeRiskDistance
-				: entry - targetR * activeRiskDistance;
-
-			// Der Stop darf nicht auf oder jenseits des aktuellen Kurses liegen, sonst
-			// wuerde NinjaTrader die Order sofort ausloesen bzw. ablehnen.
-			bool   clamped = false;
-			double limit   = activeIsLong ? referencePrice - TickSize : referencePrice + TickSize;
-			if (activeIsLong && newStop > limit)  { newStop = limit; clamped = true; }
-			if (!activeIsLong && newStop < limit) { newStop = limit; clamped = true; }
-
-			newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
-
-			// Nur in Gewinnrichtung verschieben, niemals zurueck
-			bool improves = activeIsLong ? newStop > activeStopLevel : newStop < activeStopLevel;
-			if (!improves)
-				return;
-
-			activeStopLevel = newStop;
-			SetStopLoss(activeIsLong ? SignalLong : SignalShort, CalculationMode.Price, newStop, false);
-
-			if (EnableDebugLog)
-				Print(Time[0].ToString("yyyy-MM-dd HH:mm:ss") + " VSE: Stop nachgezogen auf " + newStop
-					+ " (" + Math.Round(targetR, 2) + "R vom Einstieg " + entry + ")"
-					+ " | MFE=" + Math.Round(mfeR, 2) + "R"
-					+ (UseIntrabarTrail ? " | intrabar" : " | Kerzenschluss")
-					+ (trailArmed ? "" : " | ERSTAUSLOESUNG")
-					+ (clamped ? " | auf Marktnaehe begrenzt" : ""));
-
-			trailArmed = true;
 		}
 
 		protected override void OnBarUpdate()
 		{
-			// ---------- Tick-Serie: ausschliesslich Trailing-Stop ----------
-			// Bei Calculate.OnBarClose feuert eine 1-Tick-Serie einmal pro Tick.
-			// Hier werden bewusst KEINE Einstiege ausgeloest — die Signallogik bleibt
-			// vollstaendig auf der 1-Minuten-Serie.
-			if (BarsInProgress == 1)
-			{
-				UpdateTrail(Close[0], Close[0]);
-				return;
-			}
-
 			if (BarsInProgress != 0)
 				return;
-			if (CurrentBars[0] < Math.Max(EmaPeriod, VolumeLookback) + 1)
+			if (CurrentBar < Math.Max(EmaPeriod, VolumeLookback) + 1)
 				return;
 
 			// Neuer Handelstag -> Zaehler zuruecksetzen
@@ -296,20 +165,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				currentDay  = Time[0].Date;
 				tradesToday = 0;
-			}
-
-			// Positionsverwaltung laeuft unabhaengig von Handelsfenster und Wochentag —
-			// eine offene Position muss auch ausserhalb betreut werden.
-			// Bei aktivem Intrabar-Trailing erledigt das die Tick-Serie oben, dann wird
-			// hier nur noch der Zustand nach einem Positionsende aufgeraeumt.
-			if (UseIntrabarTrail)
-			{
-				if (Position.MarketPosition == MarketPosition.Flat)
-					ResetTrailState();
-			}
-			else
-			{
-				UpdateTrail(activeIsLong ? High[0] : Low[0], Close[0]);
 			}
 
 			TimeSpan barClose    = Time[0].TimeOfDay;                        // NT8: Zeitstempel = Kerzenschluss
@@ -510,14 +365,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				SetProfitTarget(SignalShort, CalculationMode.Price, target);
 			}
 
-			// Ausgangslage fuer den Trailing-Stop festhalten
-			activeIsLong       = isLong;
-			activeEntryPrice   = price;
-			activeRiskDistance = risk;
-			activeStopLevel    = stop;
-			activeExtreme      = price;   // Gewinnextrem startet beim Einstiegskurs
-			trailArmed         = false;
-
 			if (EnableDebugLog)
 				Print(time.ToString("yyyy-MM-dd HH:mm") + " VSE: Fill @ " + price + " x" + quantity
 					+ " | Stop=" + stop + " | Ziel=" + target
@@ -606,39 +453,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public int MinStopTicks { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Trailing-Stop aktiv", Description = "True (Standard): Der Stop wird nachgezogen, sobald der Buchgewinn den Trigger erreicht. False: Stop bleibt bis zum Ende auf dem Ausgangsniveau.", Order = 25, GroupName = "04 Trailing-Stop")]
-		public bool UseTrailStop { get; set; }
-
-		[NinjaScriptProperty]
-		[Range(0.1, 20)]
-		[Display(Name = "Ausloeser (R)", Description = "Ab welchem Buchgewinn in R der Stop nachgezogen wird. Standard 1,0.", Order = 26, GroupName = "04 Trailing-Stop")]
-		public double TrailTriggerR { get; set; }
-
-		[NinjaScriptProperty]
-		[Range(-5, 20)]
-		[Display(Name = "Neuer Stop (R vom Einstieg)", Description = "Wohin der Stop springt, gemessen in R ab Einstieg. 0 = Break-even (Standard). 0,1 = knapp im Gewinn, deckt die Kosten. Negativ = weiterhin im Verlust, nur naeher heran.", Order = 27, GroupName = "04 Trailing-Stop")]
-		public double TrailOffsetR { get; set; }
-
-		[NinjaScriptProperty]
-		[Display(Name = "Danach weiter nachziehen", Description = "False (Standard): einmaliger Sprung, danach bleibt der Stop stehen. True: der Stop folgt dem Hoch/Tief mit konstantem Abstand (Ausloeser minus neuer Stop) weiter nach.", Order = 28, GroupName = "04 Trailing-Stop")]
-		public bool ContinuousTrail { get; set; }
-
-		[NinjaScriptProperty]
-		[Display(Name = "Intrabar nachziehen (Tick-Serie)", Description = "True (Standard): zusaetzliche Tick-Datenserie, der Stop wird tickgenau nachgezogen. BRAUCHT HISTORISCHE TICKDATEN und macht den Backtest deutlich langsamer. False: Nachziehen erst beim 1-Min-Kerzenschluss, kommt ohne Tickdaten aus. Die Einstiegslogik ist in beiden Faellen identisch.", Order = 29, GroupName = "04 Trailing-Stop")]
-		public bool UseIntrabarTrail { get; set; }
-
-		[NinjaScriptProperty]
-		[Range(1, 1000)]
-		[Display(Name = "Granularitaet der Tick-Serie", Description = "Ticks je Bar der Zusatzserie. 1 = jeder Tick (genauest, langsamst). 10-50 = spuerbar schneller bei kaum schlechterer Stop-Platzierung. Nur wirksam bei aktivem Intrabar-Trailing.", Order = 30, GroupName = "04 Trailing-Stop")]
-		public int IntrabarTicks { get; set; }
-
-		[NinjaScriptProperty]
 		[Range(0, 200)]
-		[Display(Name = "Max. Trades pro Tag", Description = "0 = unbegrenzt. Es ist ohnehin immer nur eine Position gleichzeitig offen.", Order = 30, GroupName = "05 Verhalten")]
+		[Display(Name = "Max. Trades pro Tag", Description = "0 = unbegrenzt. Es ist ohnehin immer nur eine Position gleichzeitig offen.", Order = 30, GroupName = "04 Verhalten")]
 		public int MaxTradesPerDay { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Debug-Log aktiv", Description = "Schreibt jedes Signal (inkl. Volumenverhaeltnis, EMA, Stopdistanz, Risiko und Kappung), jeden Fill, jede Stop-Nachziehung und jeden Zeit-Exit ins NinjaScript Output-Fenster.", Order = 40, GroupName = "06 Diagnose")]
+		[Display(Name = "Debug-Log aktiv", Description = "Schreibt jedes Signal (inkl. Volumenverhaeltnis, EMA, Stopdistanz, Risiko und Kappung), jeden Fill und jeden Zeit-Exit ins NinjaScript Output-Fenster.", Order = 40, GroupName = "05 Diagnose")]
 		public bool EnableDebugLog { get; set; }
 		#endregion
 	}
