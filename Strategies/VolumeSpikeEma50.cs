@@ -38,6 +38,10 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //  3. LONG  wenn zusaetzlich Close > EMA50.
 //     SHORT wenn zusaetzlich Close < EMA50.
 //     Market-Order beim Schluss der Signalkerze -> Fill zum Open der Folgekerze.
+//  3b. KERZENFORM-FILTER (UseCandleShapeFilter, Standard an): Ist der Ablehnungsdocht
+//     laenger als MaxWickToBodyRatio (Standard 2,0) mal der Kerzenkoerper, wird das
+//     Signal verworfen. Ablehnungsdocht = der Docht GEGEN die Handelsrichtung:
+//     bei Long oben (High - Close), bei Short unten (Close - Low).
 //  4. Stop = OPEN DER SIGNALKERZE.
 //     Daraus folgt implizit die Kerzenfarbe: Bei Long muss Open < Close sein (gruene
 //     Kerze), sonst laege der Stop ueber dem Einstieg. Rote Kerzen ueber dem EMA
@@ -133,6 +137,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				EmaPeriod        = 50;
 				VolumeMultiple   = 2.0;
 				VolumeLookback   = 20;
+				UseCandleShapeFilter = true;
+				MaxWickToBodyRatio   = 2.0;  // Docht > 2 x Body -> kein Trade
 				RiskAmount       = 100;
 				RewardMultiple   = 1;      // frei einstellbarer R-Wert
 				MaxContracts     = 50;
@@ -361,6 +367,30 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 
+			// ---------- Kerzenform-Filter ----------
+			// Verworfen wird, wenn der Ablehnungsdocht laenger ist als MaxWickToBodyRatio
+			// mal der Kerzenkoerper. "Ablehnungsdocht" heisst der Docht GEGEN die
+			// Handelsrichtung: bei Long der obere (High - Close), bei Short der untere
+			// (Close - Low). Ein langer Docht dort bedeutet, dass die Gegenseite den Kurs
+			// innerhalb der Signalkerze schon deutlich zurueckgedrueckt hat.
+			//
+			// Weil der Koerper hier zugleich die Stopdistanz ist, sagt die Regel auch:
+			// Der bereits gelaufene Rueckschlag darf hoechstens das Ratio-fache von 1R sein.
+			if (UseCandleShapeFilter)
+			{
+				double body = Math.Abs(Close[0] - Open[0]);
+				double wick = goLong ? High[0] - Close[0] : Close[0] - Low[0];
+
+				if (wick > MaxWickToBodyRatio * body)
+				{
+					if (EnableDebugLog)
+						Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " VSE: Signal verworfen — Kerzenform: Docht "
+							+ Math.Round(wick, 1) + " > " + MaxWickToBodyRatio + " x Body " + Math.Round(body, 1)
+							+ " (Verhaeltnis " + (body > 0 ? Math.Round(wick / body, 2).ToString() : "unendlich") + ")");
+					return;
+				}
+			}
+
 			double pointValue = Instrument.MasterInstrument.PointValue;
 			if (pointValue <= 0)
 				return;                                    // bereits bei DataLoaded als Fehler geloggt
@@ -545,6 +575,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Short erlauben", Description = "Einstiege unterhalb des EMA50 zulassen.", Order = 14, GroupName = "02 Signal")]
 		public bool EnableShort { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Kerzenform-Filter aktiv", Description = "True (Standard): Signalkerzen mit zu langem Ablehnungsdocht werden verworfen.", Order = 15, GroupName = "02 Signal")]
+		public bool UseCandleShapeFilter { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0.1, 20)]
+		[Display(Name = "Max. Docht/Body-Verhaeltnis", Description = "Wie lang der Ablehnungsdocht hoechstens sein darf, als Vielfaches des Kerzenkoerpers. Bei Long zaehlt der obere Docht (High - Close), bei Short der untere (Close - Low). Standard 2,0: Docht laenger als das Doppelte des Koerpers -> kein Trade. Kleinere Werte filtern strenger.", Order = 16, GroupName = "02 Signal")]
+		public double MaxWickToBodyRatio { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000000)]

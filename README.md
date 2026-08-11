@@ -216,12 +216,36 @@ Kein Opening-Setup, sondern eine eigene Idee: **Ein Volumenausbruch in Richtung 
 1. **Handelsfenster:** 12:00–22:00, **Montag bis Donnerstag**. Außerhalb passiert nichts.
 2. **Signalkerze:** Volumen ≥ **2,0 ×** Durchschnittsvolumen der 20 vorhergehenden Kerzen.
 3. **Richtung:** Close **über** EMA50 → Long · Close **unter** EMA50 → Short.
-4. **Stop = Open der Signalkerze.**
-5. **Positionsgröße** so, dass ein Stopout ungefähr **100 €** kostet.
-6. **Ziel = `RewardMultiple` × Stopdistanz** — der frei einstellbare R-Wert, Standard 1.
-7. Immer nur **eine Position gleichzeitig**. Offene Position wird um **22:00 glattgestellt**.
+4. **Kerzenform:** Ablehnungsdocht darf höchstens **2 ×** so lang sein wie der Körper — sonst kein Trade.
+5. **Stop = Open der Signalkerze.**
+6. **Positionsgröße** so, dass ein Stopout ungefähr **100 €** kostet.
+7. **Ziel = `RewardMultiple` × Stopdistanz** — der frei einstellbare R-Wert, Standard 1.
+8. Immer nur **eine Position gleichzeitig**. Offene Position wird um **22:00 glattgestellt**.
 
 > **Sperrzeiten:** Die Vorgabe „keine Trades von 09:00 bis 12:00" ist über den **Fensterstart** abgebildet (`StartHour = 12`), nicht über eine eigene Blackout-Mechanik — bei einem Fenster, das ohnehin um 09:00 beginnen würde, ist beides identisch. Der Freitagsfilter (`TradeFriday = false`) sperrt nur **neue Einstiege**; er steht im Code nach der Glattstellungs-Logik, damit eine offene Position in jedem Fall regulär beendet würde.
+
+### Kerzenform-Filter
+
+Verworfen wird ein Signal, wenn der **Ablehnungsdocht** länger ist als `MaxWickToBodyRatio` mal der Kerzenkörper:
+
+```
+Long:   Körper = Close − Open    Docht = High − Close   (oberer Docht)
+Short:  Körper = Open − Close    Docht = Close − Low    (unterer Docht)
+
+Docht > 2 × Körper  →  kein Trade
+```
+
+Gemeint ist immer der Docht **gegen** die Handelsrichtung — bei Long also oben, bei Short unten. Ein langer Docht dort bedeutet, dass die Gegenseite den Kurs innerhalb der Signalkerze bereits deutlich zurückgedrückt hat: Der Ausbruch ist schon abverkauft, bevor du drin bist.
+
+| Signalkerze (Long) | Körper | Oberer Docht | Verhältnis | Ergebnis |
+|---|---|---|---|---|
+| Open 26250 → Close 26270, High 26280 | 20 | 10 | 0,5 | ✅ Trade |
+| Open 26250 → Close 26270, High 26310 | 20 | 40 | 2,0 | ✅ Trade (Grenzfall, nicht *größer* als 2) |
+| Open 26250 → Close 26260, High 26300 | 10 | 40 | 4,0 | ❌ verworfen |
+
+**Warum das hier besonders greift:** Der Körper *ist* in dieser Strategie die Stopdistanz. Die Regel sagt damit übersetzt: Der bereits gelaufene Rückschlag darf höchstens das Doppelte von 1R betragen. Bei `MaxWickToBodyRatio = 2` und 20 Punkten Risiko wird also alles verworfen, was schon 40+ Punkte zurückgekommen ist.
+
+Kleinere Werte filtern strenger (1,0 = Docht darf den Körper nicht überschreiten), `UseCandleShapeFilter = false` schaltet die Prüfung ab. Das Debug-Log gibt bei jedem verworfenen Signal das konkrete Verhältnis aus — damit siehst du, wie viele Signale der Filter kostet.
 
 ### Positionsgröße und der Kappungsfall
 
@@ -314,6 +338,8 @@ Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen
 | `TradeFriday` | **false** | Freitags keine neuen Einstiege |
 | `EmaPeriod` | 50 | Periode des Richtungsfilters |
 | `VolumeMultiple` | 2.0 | Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch zählt |
+| `UseCandleShapeFilter` | **true** | Kerzenform-Filter ein/aus |
+| `MaxWickToBodyRatio` | **2.0** | Max. Länge des Ablehnungsdochts als Vielfaches des Körpers |
 | `VolumeLookback` | 20 | Anzahl Kerzen für den Durchschnitt — **ohne** die aktuelle Kerze |
 | `EnableLong` / `EnableShort` | true / true | Richtungen einzeln abschaltbar, um sie isoliert zu testen |
 | `RiskAmount` | 100 | Geldrisiko je Trade (1R) in Instrumentenwährung (EUR bei FDXS) |
