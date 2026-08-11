@@ -54,7 +54,11 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //     Diese Trades werden im Debug-Log als "gekappt" markiert.
 //  7. Take-Profit = Einstieg +/- RewardMultiple x tatsaechliche Stopdistanz.
 //     RewardMultiple ist der frei einstellbare R-Wert (Standard 1).
-//  8. Immer nur eine Position gleichzeitig. Offene Position wird um 22:00
+//  8. TRAILING-STOP (UseTrailStop, Standard an): Erreicht der Buchgewinn TrailTriggerR
+//     (Standard 1R), springt der Stop auf TrailOffsetR ab Einstieg (Standard 0 =
+//     Break-even). Mit ContinuousTrail folgt er danach dem Hoch/Tief mit konstantem
+//     Abstand weiter. Der Stop wandert nur in Gewinnrichtung, nie zurueck.
+//  9. Immer nur eine Position gleichzeitig. Offene Position wird um 22:00
 //     glattgestellt (CloseAtWindowEnd).
 //
 // Stop und Ziel werden nach dem Fill auf den TATSAECHLICHEN Einstiegskurs
@@ -79,6 +83,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double pendingStopLevel;   // absoluter Stop (Candle-Open) im Normalfall
 		private double pendingCapDistance; // Geldabstand im Kappungsfall
 		private bool   pendingIsCapped;
+
+		// Zustand der laufenden Position (fuer den Trailing-Stop)
+		private bool   activeIsLong;
+		private double activeEntryPrice;
+		private double activeRiskDistance; // 1R als Kursdistanz
+		private double activeStopLevel;    // aktuell gesetzter Stop
+		private bool   trailArmed;         // Trigger wurde bereits erreicht
 
 		protected override void OnStateChange()
 		{
@@ -119,6 +130,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				RewardMultiple   = 1;      // frei einstellbarer R-Wert
 				MaxContracts     = 50;
 				MinStopTicks     = 10;     // siehe Hinweis unten; 0 = Filter aus
+				UseTrailStop     = true;
+				TrailTriggerR    = 1.0;    // ab 1R Buchgewinn ...
+				TrailOffsetR     = 0.0;    // ... Stop auf Break-even (0R vom Einstieg)
+				ContinuousTrail  = false;  // true = danach mit gleichem Abstand weiter nachziehen
 				MaxTradesPerDay  = 0;      // 0 = unbegrenzt
 				EnableDebugLog   = false;
 			}
@@ -139,12 +154,98 @@ namespace NinjaTrader.NinjaScript.Strategies
 						+ " (<= 0). Die Positionsgroesse laesst sich damit nicht berechnen, es werden KEINE Trades ausgefuehrt. "
 						+ "Point Value in Control Center -> Tools -> Instruments fuer " + Instrument.FullName + " pruefen (FDXS = 1).", LogLevel.Error);
 
+				// Liegt der Trail-Ausloeser auf oder hinter dem Take-Profit, fuellt das
+				// Ziel zuerst und der Stop wird nie nachgezogen — die Funktion waere wirkungslos.
+				if (UseTrailStop && TrailTriggerR >= RewardMultiple)
+					Log(Name + ": Trail-Ausloeser (" + TrailTriggerR + "R) liegt auf/hinter dem Take-Profit ("
+						+ RewardMultiple + "R). Das Ziel fuellt zuerst, der Trailing-Stop greift damit NIE. "
+						+ "Entweder 'R-Ziel' groesser waehlen (klassisch: Ziel 2R, Ausloeser 1R) oder den Ausloeser unter das Ziel setzen.", LogLevel.Warning);
+
 				if (EnableDebugLog)
 					Print(Name + ": Start — Instrument=" + Instrument.FullName
 						+ ", PointValue=" + Instrument.MasterInstrument.PointValue
 						+ ", TickSize=" + Instrument.MasterInstrument.TickSize
-						+ ", RiskAmount=" + RiskAmount + ", RewardMultiple=" + RewardMultiple);
+						+ ", RiskAmount=" + RiskAmount + ", RewardMultiple=" + RewardMultiple
+						+ ", Trail=" + (UseTrailStop ? TrailTriggerR + "R -> " + TrailOffsetR + "R" + (ContinuousTrail ? " (fortlaufend)" : "") : "aus"));
 			}
+		}
+
+		private void ResetTrailState()
+		{
+			activeRiskDistance = 0;
+			activeStopLevel    = 0;
+			activeEntryPrice   = 0;
+			trailArmed         = false;
+		}
+
+		// Zieht den Stop nach, sobald der Buchgewinn TrailTriggerR erreicht hat.
+		//
+		// Standard: bei 1R Buchgewinn wandert der Stop auf Break-even (TrailOffsetR = 0).
+		// Mit ContinuousTrail folgt er danach mit demselben Abstand weiter nach oben.
+		//
+		// Bewertet wird das High/Low der abgeschlossenen Kerze — bei Calculate.OnBarClose
+		// ist das die genaueste verfuegbare Naeherung. Verschoben wird der Stop erst nach
+		// Kerzenschluss, also spaeter als es ein echter Trailing-Stop taete.
+		private void ManageTrailingStop()
+		{
+			if (!UseTrailStop)
+				return;
+
+			if (Position.MarketPosition == MarketPosition.Flat)
+			{
+				ResetTrailState();
+				return;
+			}
+
+			if (activeRiskDistance <= 0)
+				return;                                    // kein Fill-Kontext bekannt
+
+			double entry = Position.AveragePrice;
+
+			// Groesste Bewegung in Gewinnrichtung waehrend dieser Kerze, in R
+			double mfeR = activeIsLong
+				? (High[0] - entry) / activeRiskDistance
+				: (entry - Low[0]) / activeRiskDistance;
+
+			if (mfeR < TrailTriggerR)
+				return;                                    // Trigger noch nicht erreicht
+
+			// Ziel-Stop als R-Abstand vom Einstieg
+			double targetR = ContinuousTrail
+				? mfeR - (TrailTriggerR - TrailOffsetR)    // gleicher Abstand hinter dem Hoch
+				: TrailOffsetR;                            // einmaliger Sprung, Standard Break-even
+
+			double newStop = activeIsLong
+				? entry + targetR * activeRiskDistance
+				: entry - targetR * activeRiskDistance;
+
+			// Der Stop darf nicht auf oder jenseits des aktuellen Kurses liegen, sonst
+			// wuerde NinjaTrader die Order sofort ausloesen bzw. ablehnen. Das passiert,
+			// wenn der Kurs innerhalb der Kerze weit vorgelaufen und wieder zurueckgekommen
+			// ist — ein echter Trailing-Stop haette dort bereits gefuellt.
+			bool clamped = false;
+			double limit = activeIsLong ? Close[0] - TickSize : Close[0] + TickSize;
+			if (activeIsLong && newStop > limit)  { newStop = limit; clamped = true; }
+			if (!activeIsLong && newStop < limit) { newStop = limit; clamped = true; }
+
+			newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+
+			// Nur in Gewinnrichtung verschieben, niemals zurueck
+			bool improves = activeIsLong ? newStop > activeStopLevel : newStop < activeStopLevel;
+			if (!improves)
+				return;
+
+			activeStopLevel = newStop;
+			SetStopLoss(activeIsLong ? SignalLong : SignalShort, CalculationMode.Price, newStop, false);
+
+			if (EnableDebugLog)
+				Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " VSE: Stop nachgezogen auf " + newStop
+					+ " (" + Math.Round(targetR, 2) + "R vom Einstieg " + entry + ")"
+					+ " | MFE dieser Kerze=" + Math.Round(mfeR, 2) + "R"
+					+ (trailArmed ? "" : " | ERSTAUSLOESUNG")
+					+ (clamped ? " | auf Marktnaehe begrenzt" : ""));
+
+			trailArmed = true;
 		}
 
 		protected override void OnBarUpdate()
@@ -160,6 +261,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				currentDay  = Time[0].Date;
 				tradesToday = 0;
 			}
+
+			// Positionsverwaltung laeuft unabhaengig von Handelsfenster und Wochentag —
+			// eine offene Position muss auch ausserhalb betreut werden.
+			ManageTrailingStop();
 
 			TimeSpan barClose    = Time[0].TimeOfDay;                        // NT8: Zeitstempel = Kerzenschluss
 			TimeSpan windowStart = new TimeSpan(StartHour, StartMinute, 0);
@@ -335,6 +440,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 				SetProfitTarget(SignalShort, CalculationMode.Price, target);
 			}
 
+			// Ausgangslage fuer den Trailing-Stop festhalten
+			activeIsLong       = isLong;
+			activeEntryPrice   = price;
+			activeRiskDistance = risk;
+			activeStopLevel    = stop;
+			trailArmed         = false;
+
 			if (EnableDebugLog)
 				Print(time.ToString("yyyy-MM-dd HH:mm") + " VSE: Fill @ " + price + " x" + quantity
 					+ " | Stop=" + stop + " | Ziel=" + target
@@ -414,12 +526,30 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public int MinStopTicks { get; set; }
 
 		[NinjaScriptProperty]
+		[Display(Name = "Trailing-Stop aktiv", Description = "True (Standard): Der Stop wird nachgezogen, sobald der Buchgewinn den Trigger erreicht. False: Stop bleibt bis zum Ende auf dem Ausgangsniveau.", Order = 25, GroupName = "04 Trailing-Stop")]
+		public bool UseTrailStop { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0.1, 20)]
+		[Display(Name = "Ausloeser (R)", Description = "Ab welchem Buchgewinn in R der Stop nachgezogen wird. Standard 1,0.", Order = 26, GroupName = "04 Trailing-Stop")]
+		public double TrailTriggerR { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(-5, 20)]
+		[Display(Name = "Neuer Stop (R vom Einstieg)", Description = "Wohin der Stop springt, gemessen in R ab Einstieg. 0 = Break-even (Standard). 0,1 = knapp im Gewinn, deckt die Kosten. Negativ = weiterhin im Verlust, nur naeher heran.", Order = 27, GroupName = "04 Trailing-Stop")]
+		public double TrailOffsetR { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Danach weiter nachziehen", Description = "False (Standard): einmaliger Sprung, danach bleibt der Stop stehen. True: der Stop folgt dem Hoch/Tief mit konstantem Abstand (Ausloeser minus neuer Stop) weiter nach.", Order = 28, GroupName = "04 Trailing-Stop")]
+		public bool ContinuousTrail { get; set; }
+
+		[NinjaScriptProperty]
 		[Range(0, 200)]
-		[Display(Name = "Max. Trades pro Tag", Description = "0 = unbegrenzt. Es ist ohnehin immer nur eine Position gleichzeitig offen.", Order = 30, GroupName = "04 Verhalten")]
+		[Display(Name = "Max. Trades pro Tag", Description = "0 = unbegrenzt. Es ist ohnehin immer nur eine Position gleichzeitig offen.", Order = 30, GroupName = "05 Verhalten")]
 		public int MaxTradesPerDay { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Debug-Log aktiv", Description = "Schreibt jedes Signal (inkl. Volumenverhaeltnis, EMA, Stopdistanz, Risiko und Kappung), jeden Fill und jeden Zeit-Exit ins NinjaScript Output-Fenster.", Order = 40, GroupName = "05 Diagnose")]
+		[Display(Name = "Debug-Log aktiv", Description = "Schreibt jedes Signal (inkl. Volumenverhaeltnis, EMA, Stopdistanz, Risiko und Kappung), jeden Fill, jede Stop-Nachziehung und jeden Zeit-Exit ins NinjaScript Output-Fenster.", Order = 40, GroupName = "06 Diagnose")]
 		public bool EnableDebugLog { get; set; }
 		#endregion
 	}
