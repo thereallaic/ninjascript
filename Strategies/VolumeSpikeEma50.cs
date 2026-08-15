@@ -360,9 +360,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (execution.Order.OrderState != OrderState.Filled && execution.Order.OrderState != OrderState.PartFilled)
 				return;
 
-			bool isLong = execution.Order.Name == SignalLong;
-			if (!isLong && execution.Order.Name != SignalShort)
+			bool isLong  = execution.Order.Name == SignalLong;
+			bool isEntry = isLong || execution.Order.Name == SignalShort;
+
+			if (!isEntry)
+			{
+				// Ausstieg. Der Ordername verraet den Grund: "Stop loss", "Profit target"
+				// oder "TimeExit". Wird der Profit trotz geaenderter R-Zielvorgabe nicht
+				// anders, zeigt diese Zeile ob ueberhaupt je ein Ziel erreicht wird.
+				if (EnableDebugLog)
+					Print(time.ToString("yyyy-MM-dd HH:mm:ss") + " VSE: EXIT durch '" + execution.Order.Name
+						+ "' @ " + price + " x" + quantity);
 				return;
+			}
 
 			double stop;
 			if (pendingIsCapped)
