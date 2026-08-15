@@ -439,6 +439,32 @@ Erreicht der Buchgewinn `BreakEvenTriggerR`, wandert der Stop **einmalig** auf `
 
 **Modellierungsgrenze:** Der Auslöser wird am High/Low der abgeschlossenen 1-Minuten-Kerze geprüft, der Stop aber erst nach deren Schluss verschoben. Ein echter Break-even-Stop reagierte im Moment der Berührung. Die Schätzung fällt damit eher **zu vorsichtig** aus als zu günstig — was für einen Test die richtige Richtung ist. Läuft der Kurs innerhalb einer Kerze vor und kommt zurück, wird der neue Stop auf knapp vor den Schlusskurs begrenzt, weil eine Stop-Order jenseits des Marktes sofort auslösen würde.
 
+### ATR-Skalierung der Stopdistanz
+
+Mit `UseAtrStop = true` wird `StopTicks` nicht mehr als fester Wert, sondern als **Mittelwert** interpretiert:
+
+```
+Stopdistanz = StopTicks × TickSize × (Tages-ATR / Ø Tages-ATR)
+```
+
+| Volatilitätslage | Faktor | Stopdistanz bei `StopTicks = 24` |
+|---|---|---|
+| halb so bewegt wie üblich | 0,5 | 12 Ticks |
+| **durchschnittlich** | **1,0** | **24 Ticks — unverändert** |
+| doppelt so bewegt | 2,0 | 48 Ticks |
+
+Deine bestehende Kalibrierung bleibt damit der Mittelpunkt — die ATR moduliert nur um sie herum. Der Faktor ist auf `[1/AtrScaleLimit, AtrScaleLimit]` gekappt (Standard 2,0), damit ein einzelner Volatilitätsausreißer keine absurden Positionsgrößen erzeugt.
+
+**Warum das den Vola-Befund adressiert:** Die Quartilsauswertung zeigte 9,14 $/Trade im ruhigsten Viertel gegen 53,42 $ im dritten — bei einer Ziel-Trefferquote von 16,2 % gegen 22,5 %. Mechanisch plausibel: Bei festem Stop musst du in ruhigen Phasen dieselbe absolute Strecke laufen, die der Markt dann gar nicht hergibt, während der Stop weiterhin vom Rauschen getroffen wird. Ein mitskalierender Stop macht das R-Ziel in jeder Lage gleich weit **relativ zur Marktbewegung**.
+
+Der Vorteil gegenüber einem Volatilitätsfilter: Es fallen **keine Trades weg**. Die Stichprobe bleibt vollständig, statt sie durch einen weiteren Filter zu verkleinern.
+
+> **1R bleibt immer 100 $.** Weil die Kontraktzahl aus dem Geldrisiko folgt, ändert die ATR-Skalierung nur die Stopdistanz *und gegenläufig* die Kontraktzahl — enger Stop, mehr Kontrakte. Was sich ändert, ist die Reichweite des R-Ziels in Punkten, nicht dein Risiko.
+>
+> **Nebenwirkung Kommission:** Enger Stop bedeutet mehr Kontrakte bedeutet höhere Gebühren pro Trade. In ruhigen Phasen steigt der Kostenblock also — behalte die Kommissionssumme im Vergleichslauf im Auge.
+
+**Standardmäßig aus**, damit dein bisheriges Ergebnis reproduzierbar bleibt. Für den A/B-Test nur `UseAtrStop` umschalten, sonst nichts ändern.
+
 ### So nutzt du den Benchmark
 
 1. TimedLong über **denselben Zeitraum, dasselbe Instrument, dieselben Kosten** laufen lassen wie die anderen Strategien.
