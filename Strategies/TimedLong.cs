@@ -53,6 +53,11 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //        Ziel = Einstieg + RewardMultiple x StopTicks x TickSize
 //     Ohne Klammer laeuft die Position bis zum Zeit-Ausstieg — das ist die reine
 //     Drift-Messung und der ehrlichere Benchmark.
+//  4b. BREAK-EVEN-STOP (UseBreakEvenStop, Standard an): Erreicht der Buchgewinn
+//     BreakEvenTriggerR (Standard 1R), wandert der Stop EINMALIG auf
+//     BreakEvenOffsetR ab Einstieg (Standard 0 = Einstiegskurs). Er bewegt sich
+//     nur in Gewinnrichtung und nur ein einziges Mal je Position.
+//     Achtung: 0R deckt die Kommission NICHT — der Trade endet dann leicht negativ.
 //  5. Positionsgroesse:
 //        Klammer aktiv + UseFixedRisk: abrunden( RiskAmount / (Stopdistanz x PointValue) )
 //        sonst: feste Kontraktzahl aus Contracts
@@ -69,6 +74,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private DateTime currentDay = DateTime.MinValue;
 		private bool     enteredToday;
 		private EMA      dailyEma;      // EMA auf der Tages-Zusatzserie (BarsInProgress 1)
+		private double   activeStopLevel;   // aktuell gesetzter Stop der laufenden Position
+		private bool     beMoved;           // Break-even-Schritt fuer diese Position erledigt
 
 		protected override void OnStateChange()
 		{
@@ -110,6 +117,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				UseColorFilter = true;
 				ColorLookback  = 20;      // wie viele Kerzen vor dem Einstieg gezaehlt werden
 				MinColorCount  = 10;      // STRIKT mehr als dieser Wert muessen passen
+				UseBreakEvenStop  = true;
+				BreakEvenTriggerR = 1.0;  // ab 1R Buchgewinn ...
+				BreakEvenOffsetR  = 0.0;  // ... Stop auf den Einstieg (0 = reines Break-even)
 				UseStopTarget  = true;    // Klammer aktiv, damit RiskAmount/RewardMultiple greifen
 				StopTicks      = 50;
 				RewardMultiple = 1;
@@ -198,6 +208,63 @@ namespace NinjaTrader.NinjaScript.Strategies
 			return count;
 		}
 
+		// Einmaliger Break-even-Schritt: Erreicht der Buchgewinn BreakEvenTriggerR,
+		// wandert der Stop auf BreakEvenOffsetR (in R ab Einstieg, 0 = Einstiegskurs).
+		//
+		// Bewertet wird das High/Low der abgeschlossenen 1-Min-Kerze, verschoben wird erst
+		// nach deren Schluss. Ein echter Break-even-Stop reagierte im Moment der Beruehrung
+		// — die Schaetzung faellt hier also eher zu VORSICHTIG aus, nicht zu guenstig.
+		private void ManageBreakEven()
+		{
+			if (!UseBreakEvenStop || !UseStopTarget)
+				return;                                    // ohne Klammer gibt es keinen Stop
+
+			if (Position.MarketPosition == MarketPosition.Flat)
+			{
+				beMoved = false;                           // Zustand fuer die naechste Position
+				return;
+			}
+
+			if (beMoved)
+				return;                                    // es gibt nur einen Schritt
+
+			bool   isLong = Position.MarketPosition == MarketPosition.Long;
+			double entry  = Position.AveragePrice;
+			double dist   = StopTicks * TickSize;          // 1R als Kursdistanz
+			if (dist <= 0)
+				return;
+
+			double mfeR = (isLong ? High[0] - entry : entry - Low[0]) / dist;
+			if (mfeR < BreakEvenTriggerR)
+				return;
+
+			double newStop = isLong ? entry + BreakEvenOffsetR * dist
+			                        : entry - BreakEvenOffsetR * dist;
+
+			// Der Stop darf nicht auf oder jenseits des aktuellen Kurses liegen, sonst
+			// loest NinjaTrader ihn sofort aus. Passiert, wenn der Kurs innerhalb der
+			// Kerze vorlief und wieder zurueckkam.
+			bool   clamped = false;
+			double limit   = isLong ? Close[0] - TickSize : Close[0] + TickSize;
+			if (isLong && newStop > limit)  { newStop = limit; clamped = true; }
+			if (!isLong && newStop < limit) { newStop = limit; clamped = true; }
+			newStop = Instrument.MasterInstrument.RoundToTickSize(newStop);
+
+			// Nur in Gewinnrichtung verschieben, niemals zurueck
+			bool improves = isLong ? newStop > activeStopLevel : newStop < activeStopLevel;
+			if (!improves)
+				return;
+
+			activeStopLevel = newStop;
+			beMoved         = true;
+			SetStopLoss(isLong ? SignalLong : SignalShort, CalculationMode.Price, newStop, false);
+
+			if (EnableDebugLog)
+				Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " TL: Break-even — Stop von "
+					+ Math.Round(isLong ? entry - dist : entry + dist, 2) + " auf " + newStop
+					+ " (MFE " + Math.Round(mfeR, 2) + "R)" + (clamped ? " | auf Marktnaehe begrenzt" : ""));
+		}
+
 		private bool IsTradingDay(DayOfWeek d)
 		{
 			switch (d)
@@ -222,6 +289,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				currentDay   = Time[0].Date;
 				enteredToday = false;
 			}
+
+			// Positionsverwaltung zuerst — laeuft unabhaengig von Fenster und Filtern
+			ManageBreakEven();
 
 			TimeSpan barClose  = Time[0].TimeOfDay;                        // NT8: Zeitstempel = Kerzenschluss
 			TimeSpan entryTime = new TimeSpan(EntryHour, EntryMinute, 0);
@@ -341,6 +411,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			SetProfitTarget(signal, CalculationMode.Price,
 				Instrument.MasterInstrument.RoundToTickSize(isLong ? price + RewardMultiple * stopDistance
 				                                                   : price - RewardMultiple * stopDistance));
+
+			// Ausgangslage fuer den Break-even-Schritt
+			activeStopLevel = Instrument.MasterInstrument.RoundToTickSize(
+				isLong ? price - stopDistance : price + stopDistance);
+			beMoved = false;
 		}
 
 		#region Properties
@@ -442,6 +517,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Range(1, 1000)]
 		[Display(Name = "Max. Kontrakte", Description = "Obergrenze der berechneten Positionsgroesse.", Order = 25, GroupName = "04 Risiko")]
 		public int MaxContracts { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Break-even-Stop aktiv", Description = "True: Erreicht der Buchgewinn den Ausloeser, wandert der Stop einmalig auf den Einstieg. Braucht eine aktive Stop/Ziel-Klammer.", Order = 27, GroupName = "04 Risiko")]
+		public bool UseBreakEvenStop { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0.1, 20)]
+		[Display(Name = "Break-even Ausloeser (R)", Description = "Ab welchem Buchgewinn in R der Stop nachgezogen wird. Standard 1,0.", Order = 28, GroupName = "04 Risiko")]
+		public double BreakEvenTriggerR { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(-2, 20)]
+		[Display(Name = "Break-even Ziel (R ab Einstieg)", Description = "Wohin der Stop springt. 0 = exakt Einstieg (Standard), deckt die Kommission NICHT. Bei 8 Kontrakten und 15,20 $ Gebuehren waeren rund 0,16 R kostenneutral.", Order = 29, GroupName = "04 Risiko")]
+		public double BreakEvenOffsetR { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000)]

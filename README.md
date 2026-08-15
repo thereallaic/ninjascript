@@ -423,6 +423,22 @@ Gezählt wird auf der geladenen Datenserie — bei 1-Minuten-Kerzen sind 20 Kerz
 
 Der Filter macht aus dem reinen Benchmark eine bedingte Strategie — für den Vergleichszweck also abschalten (`UseColorFilter = false`), sonst misst du nicht mehr die Grunddrift.
 
+### Break-even-Stop
+
+Erreicht der Buchgewinn `BreakEvenTriggerR`, wandert der Stop **einmalig** auf `BreakEvenOffsetR` (in R ab Einstieg). Standard: **bei 1R → Einstiegskurs**. Der Stop bewegt sich nur in Gewinnrichtung und nur ein einziges Mal je Position.
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `UseBreakEvenStop` | **true** | Break-even-Schritt ein/aus (braucht aktive Stop/Ziel-Klammer) |
+| `BreakEvenTriggerR` | **1.0** | Ab welchem Buchgewinn in R nachgezogen wird |
+| `BreakEvenOffsetR` | **0.0** | Wohin der Stop springt. 0 = exakt Einstieg |
+
+**Wofür das gedacht ist:** Die MFE-Auswertung zeigte, dass **30 % der Verlierer zwischenzeitlich bei ≥ 1R** standen und der durchschnittliche Verlierer 1,96R vom Hoch zurückgab. Ob sich daraus wirklich Geld holen lässt, war aus MFE/ETD nicht ableitbar — weil unbekannt bleibt, wie viele *Gewinner* ein Break-even-Stop unterwegs mit abräumt. Genau diese Frage beantwortet erst ein echter Lauf mit dieser Option.
+
+> **`BreakEvenOffsetR = 0` ist nicht kostenneutral.** Bei einem Stop exakt auf dem Einstieg fällt die Kommission trotzdem an. Bei 8 Kontrakten und 15,20 $ Gebühren entspricht das rund **0,16R** — mit `BreakEvenOffsetR = 0.16` endet ein ausgestoppter Break-even-Trade tatsächlich bei ±0. Beides ist einen Vergleichslauf wert.
+
+**Modellierungsgrenze:** Der Auslöser wird am High/Low der abgeschlossenen 1-Minuten-Kerze geprüft, der Stop aber erst nach deren Schluss verschoben. Ein echter Break-even-Stop reagierte im Moment der Berührung. Die Schätzung fällt damit eher **zu vorsichtig** aus als zu günstig — was für einen Test die richtige Richtung ist. Läuft der Kurs innerhalb einer Kerze vor und kommt zurück, wird der neue Stop auf knapp vor den Schlusskurs begrenzt, weil eine Stop-Order jenseits des Marktes sofort auslösen würde.
+
 ### So nutzt du den Benchmark
 
 1. TimedLong über **denselben Zeitraum, dasselbe Instrument, dieselben Kosten** laufen lassen wie die anderen Strategien.
