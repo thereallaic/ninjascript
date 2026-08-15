@@ -355,7 +355,7 @@ Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen
 
 ## TimedLong — Benchmark ohne Signal
 
-Kein Setup, keine Bedingung: **jeden Handelstag um 16:00 long, um 22:00 wieder flat.**
+Kein Setup, keine Bedingung: **jeden Handelstag um 16:00 long, um 22:00 wieder flat.** Über `DirectionLong = false` läuft dieselbe Mechanik short — praktisch, um dieselbe Uhrzeit in beide Richtungen zu prüfen.
 
 Der Zweck ist nicht, damit Geld zu verdienen, sondern eine **Messlatte** zu haben. Jede der vier Signalstrategien behauptet implizit, mehr zu können als „einfach drin sein". Ob das stimmt, siehst du erst im Vergleich gegen diese Baseline. Schlägt eine Strategie sie nicht, misst sie keinen Edge, sondern die Grunddrift des Marktes im gewählten Fenster — bei einem Aktienindex ist die über die Jahre positiv, das ist keine Leistung deiner Regeln.
 
@@ -379,6 +379,7 @@ Der Zweck ist nicht, damit Geld zu verdienen, sondern eine **Messlatte** zu habe
 | `EntryHour` / `EntryMinute` | **16** / 0 | Uhrzeit des täglichen Einstiegs |
 | `ExitHour` / `ExitMinute` | 22 / 0 | Uhrzeit des Ausstiegs |
 | `TradeMonday` … `TradeFriday` | alle true | Wochentage einzeln abschaltbar |
+| `DirectionLong` | **true** | true = Long · false = Short (Stop und Ziel gespiegelt) |
 | `UseStopTarget` | **true** | true = feste Stop/Ziel-Klammer · false = reine Drift-Messung, Risiko unbegrenzt |
 | `StopTicks` | 50 | Stopdistanz in Ticks (FDXS: 1 Tick = 1 Punkt), nur bei aktiver Klammer |
 | `RewardMultiple` | 1 | Ziel in R, nur bei aktiver Klammer |
