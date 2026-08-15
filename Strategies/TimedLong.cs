@@ -58,6 +58,12 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //     BreakEvenOffsetR ab Einstieg (Standard 0 = Einstiegskurs). Er bewegt sich
 //     nur in Gewinnrichtung und nur ein einziges Mal je Position.
 //     Achtung: 0R deckt die Kommission NICHT — der Trade endet dann leicht negativ.
+//  4c. ATR-SKALIERUNG (UseAtrStop, Standard AUS): Ist sie aktiv, gilt StopTicks als
+//     MITTELWERT und wird mit dem Verhaeltnis aus aktueller Tages-ATR zu deren
+//     langfristigem Schnitt multipliziert. Ruhige Phasen -> engerer Stop (das R-Ziel
+//     rueckt in Reichweite), wilde Phasen -> weiterer Stop. Der Faktor ist auf
+//     [1/AtrScaleLimit, AtrScaleLimit] gekappt. Weil die Positionsgroesse aus dem
+//     Geldrisiko folgt, bleibt 1R dabei immer derselbe Geldbetrag.
 //  5. Positionsgroesse:
 //        Klammer aktiv + UseFixedRisk: abrunden( RiskAmount / (Stopdistanz x PointValue) )
 //        sonst: feste Kontraktzahl aus Contracts
@@ -74,6 +80,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private DateTime currentDay = DateTime.MinValue;
 		private bool     enteredToday;
 		private EMA      dailyEma;      // EMA auf der Tages-Zusatzserie (BarsInProgress 1)
+		private ATR      dailyAtr;          // ATR auf der Tages-Zusatzserie
+		private SMA      dailyAtrAvg;       // langfristiger Mittelwert derselben ATR
+		private double   activeStopDistance;// 1R dieser Position in Kurseinheiten
 		private double   activeStopLevel;   // aktuell gesetzter Stop der laufenden Position
 		private bool     beMoved;           // Break-even-Schritt fuer diese Position erledigt
 
@@ -122,6 +131,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				BreakEvenOffsetR  = 0.0;  // ... Stop auf den Einstieg (0 = reines Break-even)
 				UseStopTarget  = true;    // Klammer aktiv, damit RiskAmount/RewardMultiple greifen
 				StopTicks      = 50;
+				UseAtrStop       = false;  // Standard aus: feste Stopdistanz wie bisher
+				AtrPeriod        = 14;
+				AtrAveragePeriod = 100;
+				AtrScaleLimit    = 2.0;
 				RewardMultiple = 1;
 				UseFixedRisk   = true;
 				RiskAmount     = 100;
@@ -138,7 +151,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				// NinjaTrader verarbeitet von Zusatzserien nur ABGESCHLOSSENE Bars — die
 				// heutige Tageskerze ist um 14:31 also noch nicht dabei. Der EMA-Wert
 				// stammt damit aus abgeschlossenen Tagen, kein Blick in die Zukunft.
-				if (UseDailyEmaFilter)
+				if (UseDailyEmaFilter || UseAtrStop)
 					AddDataSeries(BarsPeriodType.Day, 1);
 			}
 			else if (State == State.DataLoaded)
@@ -163,6 +176,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (UseDailyEmaFilter)
 					dailyEma = EMA(Closes[1], DailyEmaPeriod);
 
+				if (UseAtrStop)
+				{
+					dailyAtr    = ATR(BarsArray[1], AtrPeriod);
+					dailyAtrAvg = SMA(dailyAtr, AtrAveragePeriod);
+				}
+
 				if (EnableDebugLog)
 					Print(Name + ": Start — Instrument=" + Instrument.FullName
 						+ ", Einstieg " + EntryHour.ToString("00") + ":" + EntryMinute.ToString("00")
@@ -171,18 +190,45 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 		}
 
+		// Stopdistanz dieser Position in Kurseinheiten.
+		//
+		// UseAtrStop = false: schlicht StopTicks x TickSize.
+		//
+		// UseAtrStop = true: StopTicks bleibt der MITTELWERT und wird mit dem Verhaeltnis
+		// aus aktueller Tages-ATR zu ihrem langfristigen Schnitt skaliert:
+		//     Distanz = StopTicks x TickSize x (ATR / Ø ATR)
+		// Bei durchschnittlicher Volatilitaet aendert sich also nichts, in ruhigen Phasen
+		// wird der Stop enger (und das R-Ziel damit erreichbar), in wilden Phasen weiter.
+		// Der Faktor ist auf [1/AtrScaleLimit, AtrScaleLimit] begrenzt, damit ein einzelner
+		// Ausreisser keine absurden Positionsgroessen erzeugt.
+		private double CurrentStopDistance()
+		{
+			double baseDist = StopTicks * TickSize;
+			if (!UseAtrStop || dailyAtr == null || dailyAtrAvg == null)
+				return baseDist;
+			if (CurrentBars.Length < 2 || CurrentBars[1] < AtrPeriod + AtrAveragePeriod)
+				return baseDist;                            // noch kein verlaesslicher Schnitt
+
+			double atr = dailyAtr[0], avg = dailyAtrAvg[0];
+			if (atr <= 0 || avg <= 0)
+				return baseDist;
+
+			double f = Math.Max(1.0 / AtrScaleLimit, Math.Min(AtrScaleLimit, atr / avg));
+			double d = Instrument.MasterInstrument.RoundToTickSize(baseDist * f);
+			return Math.Max(TickSize, d);
+		}
+
 		// Ohne Stop gibt es keine Bezugsgroesse fuer ein Geldrisiko -> feste Kontraktzahl.
-		private int CalcQuantity()
+		private int CalcQuantity(double stopDistance)
 		{
 			if (!UseStopTarget || !UseFixedRisk)
 				return Contracts;
 
 			double pointValue = Instrument.MasterInstrument.PointValue;
-			if (pointValue <= 0 || StopTicks <= 0)
+			if (pointValue <= 0 || stopDistance <= 0)
 				return Contracts;
 
 			// Risiko je Kontrakt = Stopdistanz in KURSEINHEITEN x Waehrung je Punkt
-			double stopDistance   = StopTicks * TickSize;
 			double riskPerContract = stopDistance * pointValue;
 			if (riskPerContract <= 0)
 				return Contracts;
@@ -230,7 +276,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			bool   isLong = Position.MarketPosition == MarketPosition.Long;
 			double entry  = Position.AveragePrice;
-			double dist   = StopTicks * TickSize;          // 1R als Kursdistanz
+			double dist   = activeStopDistance > 0 ? activeStopDistance : StopTicks * TickSize;  // 1R
 			if (dist <= 0)
 				return;
 
@@ -360,9 +406,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 			}
 
-			int    qty          = CalcQuantity();
+			double stopDistance = CurrentStopDistance();
+			int    qty          = CalcQuantity(stopDistance);
 			string signal       = DirectionLong ? SignalLong : SignalShort;
-			double stopDistance = StopTicks * TickSize;
+			activeStopDistance  = stopDistance;   // fuer Fill-Nachrechnung und Break-even
 			double stopLevel    = Instrument.MasterInstrument.RoundToTickSize(
 				DirectionLong ? Close[0] - stopDistance : Close[0] + stopDistance);
 			double targetLevel  = Instrument.MasterInstrument.RoundToTickSize(
@@ -403,7 +450,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (!isLong && execution.Order.Name != SignalShort)
 				return;
 
-			double stopDistance = StopTicks * TickSize;
+			double stopDistance = activeStopDistance > 0 ? activeStopDistance : CurrentStopDistance();
 			string signal       = isLong ? SignalLong : SignalShort;
 
 			SetStopLoss(signal, CalculationMode.Price,
@@ -498,6 +545,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Range(1, 100000)]
 		[Display(Name = "Stopdistanz (Ticks)", Description = "Abstand des Stops vom Einstieg. Nur wirksam bei aktiver Klammer. FDXS: 1 Tick = 1 Punkt.", Order = 21, GroupName = "04 Risiko")]
 		public int StopTicks { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Stopdistanz an ATR skalieren", Description = "False (Standard): feste Stopdistanz aus 'Stopdistanz (Ticks)'. True: dieser Wert gilt als MITTELWERT und wird mit ATR/Ø-ATR der Tageskerzen skaliert — in ruhigen Phasen enger, in wilden weiter.", Order = 30, GroupName = "04 Risiko")]
+		public bool UseAtrStop { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(2, 200)]
+		[Display(Name = "ATR-Periode (Tage)", Description = "Periode der ATR auf Tagesbasis. Standard 14.", Order = 31, GroupName = "04 Risiko")]
+		public int AtrPeriod { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(10, 1000)]
+		[Display(Name = "ATR-Referenzschnitt (Tage)", Description = "Ueber wie viele Tage der Vergleichs-Mittelwert der ATR gebildet wird. Bestimmt, was als 'normale' Volatilitaet gilt. Standard 100.", Order = 32, GroupName = "04 Risiko")]
+		public int AtrAveragePeriod { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(1.1, 10)]
+		[Display(Name = "ATR-Skalierungsgrenze", Description = "Der Faktor ATR/Ø-ATR wird auf [1/Grenze, Grenze] gekappt. Standard 2,0: die Stopdistanz bleibt zwischen der Haelfte und dem Doppelten des eingestellten Werts.", Order = 33, GroupName = "04 Risiko")]
+		public double AtrScaleLimit { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(0.25, 20)]
