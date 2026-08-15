@@ -408,6 +408,29 @@ Dafür lädt die Strategie eine **zusätzliche Tages-Datenserie** (`AddDataSerie
 
 **Der Filter wirkt richtungsunabhängig.** Er ist bewusst *nicht* an `DirectionLong` gekoppelt, weil du „über dem EMA" explizit vorgegeben hast. Für einen Short-Lauf im Abwärtstrend setzt du `DailyEmaAbove = false` — dann wird nur unterhalb der Linie geshortet.
 
+### Volumen-Veto
+
+Mit `UseVolumeVeto = true` wird **nicht** eingestiegen, wenn kurz vorher ein Volumenausbruch stattfand:
+
+```
+Hatte EINE der letzten 5 Kerzen (inkl. der gerade geschlossenen)
+mehr als 2,0 × das Durchschnittsvolumen der letzten 20 Kerzen
+→ kein Einstieg an diesem Tag
+```
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `UseVolumeVeto` | **false** | Veto ein/aus |
+| `VolumeVetoLookback` | 5 | Wie viele Kerzen geprüft werden |
+| `VolumeVetoAvgPeriod` | 20 | Referenz-Durchschnitt |
+| `VolumeVetoMultiple` | 2.0 | Ab welchem Vielfachen eine Kerze als Ausbruch gilt |
+
+Gedanke dahinter: Ein frischer Volumenausbruch heißt, dass gerade etwas passiert ist — in so eine Bewegung hineinzugehen ist ein anderes Setup als ruhiger Handel. Beachte, dass dieses Veto die **umgekehrte** Logik zu `VolumeSpikeEma50` ist, die genau auf solchen Ausbrüchen einsteigt.
+
+Der Durchschnitt umfasst die geprüften Kerzen mit (wörtliche Lesart „der letzten 20"). Ein Ausreißer hebt damit leicht seine eigene Messlatte, was den Filter minimal konservativer macht.
+
+**Standardmäßig aus**, damit bestehende Läufe reproduzierbar bleiben — für den A/B-Test nur diesen einen Schalter umlegen.
+
 ### Farbfilter (Momentum-Bestätigung)
 
 Mit `UseColorFilter = true` (Standard) wird nur eingestiegen, wenn die jüngste Kursbewegung zur Handelsrichtung passt:
