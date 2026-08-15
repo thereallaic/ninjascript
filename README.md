@@ -362,15 +362,15 @@ Der Zweck ist nicht, damit Geld zu verdienen, sondern eine **Messlatte** zu habe
 1. **Einstieg:** erste Kerze, die um 16:00 oder danach schließt → Market-Order, Fill zum Open der Folgekerze (also ≈ 16:00:00).
 2. **Ausstieg:** erste Kerze, die um 22:00 oder danach schließt.
 3. Genau **ein Trade pro Handelstag**, alle Wochentage einzeln abschaltbar.
-4. **Standardmäßig ohne Stop und Ziel** — die Position läuft die vollen sechs Stunden durch.
+4. **Stop/Ziel-Klammer standardmäßig aktiv** (`StopTicks` = 50, `RewardMultiple` = 1), Positionsgröße aus 100 € Risiko.
 
-### Warum ohne Klammer als Standard
+### Die zwei Modi — und warum die Unterscheidung wichtig ist
 
-Ohne Stop und Ziel misst die Strategie exakt das, was sie messen soll: die durchschnittliche Kursbewegung von 16:00 bis 22:00. Sobald eine Klammer im Spiel ist, misst du zusätzlich die Wechselwirkung von Stopdistanz und Volatilität — und das verwässert den Benchmark.
+**`UseStopTarget = true` (Standard):** Stop bei `StopTicks` Abstand, Ziel bei `RewardMultiple × StopTicks`, Positionsgröße aus `RiskAmount`. Damit läuft die Baseline auf **derselben Risikobasis** wie die übrigen Strategien und ist direkt vergleichbar.
 
-Mit `UseStopTarget = true` bekommst du trotzdem eine Variante mit fester Klammer (`StopTicks`, `RewardMultiple`), dann greift auch die Positionsgrößen-Berechnung aus dem Geldrisiko. Sinnvoll, wenn du die Baseline auf **exakt derselben Risikobasis** wie die anderen Strategien vergleichen willst.
+**`UseStopTarget = false`:** Kein Stop, kein Ziel — die Position läuft die vollen Stunden durch. Das misst die **reine Drift** des Zeitfensters und ist der ehrlichere Benchmark, weil keine Wechselwirkung mit Stopdistanz und Volatilität hineinspielt.
 
-> Ohne Klammer gibt es keine Stopdistanz und damit keine Bezugsgröße für ein Geldrisiko — die Positionsgröße ist dann schlicht `Contracts` (Standard 1). Ein Vergleich des Net Profit mit den 100-€-Risiko-Strategien ist in diesem Modus also nicht direkt möglich; aussagekräftig sind Trefferquote, Erwartung pro Trade und die Form der Equity-Kurve.
+> **⚠️ In diesem Modus sind `RiskAmount`, `RewardMultiple` und `UseFixedRisk` wirkungslos** — sie stehen weiter im Parametergitter, tun aber nichts. Ohne Stop gibt es keine Bezugsgröße für ein Geldrisiko, die Positionsgröße ist schlicht `Contracts` (Standard 1), und das Risiko je Trade ist **unbegrenzt**. Die Strategie schreibt beim Start eine entsprechende Warnung ins **Log**-Tab. Vergleichsgrößen sind dann Trefferquote, Erwartung pro Trade und die Form der Equity-Kurve — nicht Net Profit.
 
 ### Parameter
 
@@ -379,7 +379,7 @@ Mit `UseStopTarget = true` bekommst du trotzdem eine Variante mit fester Klammer
 | `EntryHour` / `EntryMinute` | **16** / 0 | Uhrzeit des täglichen Einstiegs |
 | `ExitHour` / `ExitMinute` | 22 / 0 | Uhrzeit des Ausstiegs |
 | `TradeMonday` … `TradeFriday` | alle true | Wochentage einzeln abschaltbar |
-| `UseStopTarget` | **false** | false = reine Drift-Messung · true = feste Stop/Ziel-Klammer |
+| `UseStopTarget` | **true** | true = feste Stop/Ziel-Klammer · false = reine Drift-Messung, Risiko unbegrenzt |
 | `StopTicks` | 50 | Stopdistanz in Ticks (FDXS: 1 Tick = 1 Punkt), nur bei aktiver Klammer |
 | `RewardMultiple` | 1 | Ziel in R, nur bei aktiver Klammer |
 | `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße aus dem Geldrisiko, nur bei aktiver Klammer |
