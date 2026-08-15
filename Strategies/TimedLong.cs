@@ -89,7 +89,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TradeWednesday = true;
 				TradeThursday  = true;
 				TradeFriday    = true;
-				UseStopTarget  = false;   // Standard: reine Drift-Messung ohne Klammer
+				UseStopTarget  = true;    // Klammer aktiv, damit RiskAmount/RewardMultiple greifen
 				StopTicks      = 50;
 				RewardMultiple = 1;
 				UseFixedRisk   = true;
@@ -100,6 +100,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 			else if (State == State.DataLoaded)
 			{
+				// Ohne Klammer sind RiskAmount, RewardMultiple und UseFixedRisk wirkungslos,
+				// stehen aber trotzdem im Parametergitter. Das einmal klar in den Log
+				// schreiben, damit niemand ein Risikolimit annimmt, das es nicht gibt.
+				if (!UseStopTarget)
+					Log(Name + ": 'Stop/Ziel-Klammer aktiv' steht auf False — es gibt WEDER Stop NOCH Ziel. "
+						+ "Die Position laeuft von " + EntryHour.ToString("00") + ":" + EntryMinute.ToString("00")
+						+ " bis " + ExitHour.ToString("00") + ":" + ExitMinute.ToString("00")
+						+ " durch, das Risiko je Trade ist unbegrenzt. 'Risiko je Trade' (" + RiskAmount
+						+ ") und 'R-Ziel' (" + RewardMultiple + ") werden dabei IGNORIERT. "
+						+ "Positionsgroesse ist fest: " + Contracts + " Kontrakt(e).", LogLevel.Warning);
+
 				if (UseStopTarget && UseFixedRisk && Instrument.MasterInstrument.PointValue <= 0)
 					Log(Name + ": PointValue des Instruments ist " + Instrument.MasterInstrument.PointValue
 						+ " (<= 0). Die Positionsgroesse laesst sich damit nicht aus dem Geldrisiko berechnen, es wird auf "
