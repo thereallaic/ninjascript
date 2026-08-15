@@ -380,12 +380,30 @@ Der Zweck ist nicht, damit Geld zu verdienen, sondern eine **Messlatte** zu habe
 | `ExitHour` / `ExitMinute` | 22 / 0 | Uhrzeit des Ausstiegs |
 | `TradeMonday` … `TradeFriday` | alle true | Wochentage einzeln abschaltbar |
 | `DirectionLong` | **true** | true = Long · false = Short (Stop und Ziel gespiegelt) |
+| `UseColorFilter` | **true** | Momentum-Filter über die Kerzenfarben ein/aus |
+| `ColorLookback` | **20** | Wie viele Kerzen vor dem Einstieg gezählt werden (inkl. der gerade geschlossenen) |
+| `MinColorCount` | **10** | Es müssen **strikt mehr** als so viele Kerzen in Handelsrichtung schließen |
 | `UseStopTarget` | **true** | true = feste Stop/Ziel-Klammer · false = reine Drift-Messung, Risiko unbegrenzt |
 | `StopTicks` | 50 | Stopdistanz in Ticks (FDXS: 1 Tick = 1 Punkt), nur bei aktiver Klammer |
 | `RewardMultiple` | 1 | Ziel in R, nur bei aktiver Klammer |
 | `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße aus dem Geldrisiko, nur bei aktiver Klammer |
 | `Contracts` | 1 | Feste Größe ohne Klammer bzw. bei `UseFixedRisk = false` |
 | `EnableDebugLog` | false | Loggt jeden Ein- und Ausstieg |
+
+### Farbfilter (Momentum-Bestätigung)
+
+Mit `UseColorFilter = true` (Standard) wird nur eingestiegen, wenn die jüngste Kursbewegung zur Handelsrichtung passt:
+
+```
+Short: mehr als 10 der letzten 20 Kerzen müssen ROT sein   (Close < Open)
+Long:  mehr als 10 der letzten 20 Kerzen müssen GRÜN sein  (Close > Open)
+```
+
+Die Schwelle ist **strikt**: Bei `MinColorCount = 10` und `ColorLookback = 20` braucht es mindestens **11** passende Kerzen. Dojis (Close == Open) zählen für keine Seite und wirken damit leicht bremsend.
+
+Gezählt wird auf der geladenen Datenserie — bei 1-Minuten-Kerzen sind 20 Kerzen also die 20 Minuten vor dem Einstieg. Fällt der Filter durch, ist der Tag abgehakt; die Strategie rückt nicht später nach, weil der Einstieg an eine feste Uhrzeit gebunden ist.
+
+Der Filter macht aus dem reinen Benchmark eine bedingte Strategie — für den Vergleichszweck also abschalten (`UseColorFilter = false`), sonst misst du nicht mehr die Grunddrift.
 
 ### So nutzt du den Benchmark
 

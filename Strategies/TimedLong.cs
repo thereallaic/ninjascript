@@ -38,6 +38,11 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //  2. Ausstieg bei der ersten Kerze, die um ExitHour:ExitMinute (Standard 22:00)
 //     oder danach schliesst.
 //  3. Genau ein Trade pro Handelstag.
+//  3b. FARBFILTER (UseColorFilter, Standard an): Einstieg nur, wenn unter den letzten
+//     ColorLookback Kerzen (Standard 20, inkl. der gerade geschlossenen) STRIKT MEHR
+//     als MinColorCount (Standard 10) in Handelsrichtung schlossen — bei Short also
+//     rote (Close < Open), bei Long gruene. Dojis zaehlen fuer keine Seite.
+//     Faellt der Filter durch, ist der Tag abgehakt; es wird nicht spaeter nachgerueckt.
 //  4. Optionale Stop/Ziel-Klammer (UseStopTarget, Standard AN):
 //        Stop = Einstieg - StopTicks x TickSize
 //        Ziel = Einstieg + RewardMultiple x StopTicks x TickSize
@@ -93,6 +98,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TradeThursday  = true;
 				TradeFriday    = true;
 				DirectionLong  = true;    // false = short statt long
+				UseColorFilter = true;
+				ColorLookback  = 20;      // wie viele Kerzen vor dem Einstieg gezaehlt werden
+				MinColorCount  = 10;      // STRIKT mehr als dieser Wert muessen passen
 				UseStopTarget  = true;    // Klammer aktiv, damit RiskAmount/RewardMultiple greifen
 				StopTicks      = 50;
 				RewardMultiple = 1;
@@ -101,6 +109,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				MaxContracts   = 50;
 				Contracts      = 1;
 				EnableDebugLog = false;
+			}
+			else if (State == State.Configure)
+			{
+				// Der Farbfilter braucht Vorlauf, sonst greift er am Anfang der Serie ins Leere
+				BarsRequiredToTrade = Math.Max(BarsRequiredToTrade, UseColorFilter ? ColorLookback : 1);
 			}
 			else if (State == State.DataLoaded)
 			{
@@ -149,6 +162,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 			// Mindestens 1 Kontrakt: Ein uebersprungener Tag wuerde den Benchmark verzerren,
 			// weil dann nicht mehr jeder Handelstag im Sample vertreten waere.
 			return Math.Max(1, Math.Min(qty, MaxContracts));
+		}
+
+		// Zaehlt unter den letzten ColorLookback Kerzen (inkl. der gerade geschlossenen)
+		// diejenigen in Handelsrichtung: bei Short rote (Close < Open), bei Long gruene.
+		// Dojis (Close == Open) zaehlen fuer keine Seite und wirken damit leicht bremsend.
+		// Bestanden ist der Filter erst, wenn es STRIKT mehr als MinColorCount sind.
+		private int CountDirectionalCandles()
+		{
+			int count = 0;
+			for (int i = 0; i < ColorLookback; i++)
+			{
+				if (DirectionLong) { if (Close[i] > Open[i]) count++; }
+				else               { if (Close[i] < Open[i]) count++; }
+			}
+			return count;
 		}
 
 		private bool IsTradingDay(DayOfWeek d)
@@ -204,6 +232,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			if (Position.MarketPosition != MarketPosition.Flat)
 				return;
+
+			// ---------- Farbfilter: Momentum der letzten Kerzen muss zur Richtung passen ----------
+			if (UseColorFilter)
+			{
+				if (CurrentBar < ColorLookback)
+					return;
+
+				int matching = CountDirectionalCandles();
+				if (matching <= MinColorCount)
+				{
+					if (EnableDebugLog)
+						Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " TL: kein Trade — Farbfilter: nur "
+							+ matching + " von " + ColorLookback + " Kerzen "
+							+ (DirectionLong ? "gruen" : "rot") + " (noetig: mehr als " + MinColorCount + ")");
+					enteredToday = true;   // Tag abhaken, kein spaeteres Nachruecken
+					return;
+				}
+			}
 
 			int    qty          = CalcQuantity();
 			string signal       = DirectionLong ? SignalLong : SignalShort;
@@ -304,40 +350,54 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public bool DirectionLong { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Stop/Ziel-Klammer aktiv", Description = "False (Standard): kein Stop, kein Ziel — die Position laeuft bis zum Zeit-Ausstieg. Das ist die reine Drift-Messung. True: feste Klammer wie unten eingestellt.", Order = 20, GroupName = "03 Risiko")]
+		[Display(Name = "Farbfilter aktiv", Description = "True (Standard): Einstieg nur, wenn genug der letzten Kerzen in Handelsrichtung schlossen. Bei Short zaehlen rote Kerzen, bei Long gruene.", Order = 16, GroupName = "03 Signalfilter")]
+		public bool UseColorFilter { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(2, 500)]
+		[Display(Name = "Kerzen-Rueckblick", Description = "Wie viele Kerzen vor dem Einstieg gezaehlt werden, inklusive der gerade geschlossenen. Standard 20.", Order = 17, GroupName = "03 Signalfilter")]
+		public int ColorLookback { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0, 500)]
+		[Display(Name = "Mindestanzahl passender Kerzen", Description = "Es muessen STRIKT MEHR als so viele Kerzen in Handelsrichtung geschlossen haben. Standard 10 bei 20 Kerzen Rueckblick, also mindestens 11.", Order = 18, GroupName = "03 Signalfilter")]
+		public int MinColorCount { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Stop/Ziel-Klammer aktiv", Description = "False (Standard): kein Stop, kein Ziel — die Position laeuft bis zum Zeit-Ausstieg. Das ist die reine Drift-Messung. True: feste Klammer wie unten eingestellt.", Order = 20, GroupName = "04 Risiko")]
 		public bool UseStopTarget { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 100000)]
-		[Display(Name = "Stopdistanz (Ticks)", Description = "Abstand des Stops vom Einstieg. Nur wirksam bei aktiver Klammer. FDXS: 1 Tick = 1 Punkt.", Order = 21, GroupName = "03 Risiko")]
+		[Display(Name = "Stopdistanz (Ticks)", Description = "Abstand des Stops vom Einstieg. Nur wirksam bei aktiver Klammer. FDXS: 1 Tick = 1 Punkt.", Order = 21, GroupName = "04 Risiko")]
 		public int StopTicks { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(0.25, 20)]
-		[Display(Name = "R-Ziel (Reward-Multiple)", Description = "Ziel = Einstieg + Multiple x Stopdistanz. Nur wirksam bei aktiver Klammer.", Order = 22, GroupName = "03 Risiko")]
+		[Display(Name = "R-Ziel (Reward-Multiple)", Description = "Ziel = Einstieg + Multiple x Stopdistanz. Nur wirksam bei aktiver Klammer.", Order = 22, GroupName = "04 Risiko")]
 		public double RewardMultiple { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Groesse aus Geldrisiko", Description = "True (Standard): Kontraktzahl so, dass ein Stopout etwa dem Betrag unten entspricht. Nur wirksam bei aktiver Klammer — ohne Stop gibt es keine Bezugsgroesse.", Order = 23, GroupName = "03 Risiko")]
+		[Display(Name = "Groesse aus Geldrisiko", Description = "True (Standard): Kontraktzahl so, dass ein Stopout etwa dem Betrag unten entspricht. Nur wirksam bei aktiver Klammer — ohne Stop gibt es keine Bezugsgroesse.", Order = 23, GroupName = "04 Risiko")]
 		public bool UseFixedRisk { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000000)]
-		[Display(Name = "Risiko je Trade", Description = "Geldbetrag in INSTRUMENTENWAEHRUNG, den ein Stopout kostet. FDXS rechnet in EUR.", Order = 24, GroupName = "03 Risiko")]
+		[Display(Name = "Risiko je Trade", Description = "Geldbetrag in INSTRUMENTENWAEHRUNG, den ein Stopout kostet. FDXS rechnet in EUR.", Order = 24, GroupName = "04 Risiko")]
 		public double RiskAmount { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000)]
-		[Display(Name = "Max. Kontrakte", Description = "Obergrenze der berechneten Positionsgroesse.", Order = 25, GroupName = "03 Risiko")]
+		[Display(Name = "Max. Kontrakte", Description = "Obergrenze der berechneten Positionsgroesse.", Order = 25, GroupName = "04 Risiko")]
 		public int MaxContracts { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000)]
-		[Display(Name = "Kontrakte (fest)", Description = "Positionsgroesse ohne Klammer bzw. wenn 'Groesse aus Geldrisiko' aus ist.", Order = 26, GroupName = "03 Risiko")]
+		[Display(Name = "Kontrakte (fest)", Description = "Positionsgroesse ohne Klammer bzw. wenn 'Groesse aus Geldrisiko' aus ist.", Order = 26, GroupName = "04 Risiko")]
 		public int Contracts { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Debug-Log aktiv", Description = "Schreibt jeden Einstieg und Ausstieg ins NinjaScript Output-Fenster.", Order = 30, GroupName = "04 Diagnose")]
+		[Display(Name = "Debug-Log aktiv", Description = "Schreibt jeden Einstieg und Ausstieg ins NinjaScript Output-Fenster.", Order = 30, GroupName = "05 Diagnose")]
 		public bool EnableDebugLog { get; set; }
 		#endregion
 	}
