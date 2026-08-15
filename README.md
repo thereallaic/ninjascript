@@ -380,6 +380,9 @@ Der Zweck ist nicht, damit Geld zu verdienen, sondern eine **Messlatte** zu habe
 | `ExitHour` / `ExitMinute` | 22 / 0 | Uhrzeit des Ausstiegs |
 | `TradeMonday` … `TradeFriday` | alle true | Wochentage einzeln abschaltbar |
 | `DirectionLong` | **true** | true = Long · false = Short (Stop und Ziel gespiegelt) |
+| `UseDailyEmaFilter` | **true** | Übergeordneter Trendfilter auf Tagesbasis ein/aus |
+| `DailyEmaPeriod` | **50** | Periode des EMA im Tageschart |
+| `DailyEmaAbove` | **true** | true = nur über dem Tages-EMA handeln · false = nur darunter |
 | `UseColorFilter` | **true** | Momentum-Filter über die Kerzenfarben ein/aus |
 | `ColorLookback` | **20** | Wie viele Kerzen vor dem Einstieg gezählt werden (inkl. der gerade geschlossenen) |
 | `MinColorCount` | **10** | Es müssen **strikt mehr** als so viele Kerzen in Handelsrichtung schließen |
@@ -389,6 +392,21 @@ Der Zweck ist nicht, damit Geld zu verdienen, sondern eine **Messlatte** zu habe
 | `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße aus dem Geldrisiko, nur bei aktiver Klammer |
 | `Contracts` | 1 | Feste Größe ohne Klammer bzw. bei `UseFixedRisk = false` |
 | `EnableDebugLog` | false | Loggt jeden Ein- und Ausstieg |
+
+### Tages-EMA-Filter (übergeordneter Trend)
+
+Mit `UseDailyEmaFilter = true` (Standard) wird nur gehandelt, wenn der Kurs zur Einstiegszeit auf der verlangten Seite des **EMA50 im Tageschart** liegt:
+
+```
+DailyEmaAbove = true   →  Einstieg nur, wenn Kurs ÜBER dem Tages-EMA50
+DailyEmaAbove = false  →  Einstieg nur, wenn Kurs UNTER dem Tages-EMA50
+```
+
+Dafür lädt die Strategie eine **zusätzliche Tages-Datenserie** (`AddDataSeries(BarsPeriodType.Day, 1)`). Das ist billig — anders als eine Tick-Serie kostet es kaum Rechenzeit und braucht keine Sonderdaten.
+
+> **Kein Look-ahead:** Von Zusatzserien verarbeitet NinjaTrader ausschließlich **abgeschlossene** Bars. Um 14:31 ist die heutige Tageskerze noch nicht fertig und fließt daher nicht in den EMA ein — der Wert stützt sich auf vollständige Vortage. Genau so muss es sein: Würde der heutige Tagesschluss mitzählen, wüsste die Strategie, wie der Tag ausgeht.
+
+**Der Filter wirkt richtungsunabhängig.** Er ist bewusst *nicht* an `DirectionLong` gekoppelt, weil du „über dem EMA" explizit vorgegeben hast. Für einen Short-Lauf im Abwärtstrend setzt du `DailyEmaAbove = false` — dann wird nur unterhalb der Linie geshortet.
 
 ### Farbfilter (Momentum-Bestätigung)
 

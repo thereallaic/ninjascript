@@ -38,6 +38,11 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //  2. Ausstieg bei der ersten Kerze, die um ExitHour:ExitMinute (Standard 22:00)
 //     oder danach schliesst.
 //  3. Genau ein Trade pro Handelstag.
+//  3a. TAGES-EMA-FILTER (UseDailyEmaFilter, Standard an): Gehandelt wird nur, wenn der
+//     Kurs auf der verlangten Seite des EMA im TAGESCHART liegt (DailyEmaAbove:
+//     true = darueber, false = darunter). Dafuer wird eine Tages-Zusatzserie geladen.
+//     Von Zusatzserien verarbeitet NinjaTrader nur ABGESCHLOSSENE Bars, der EMA
+//     stuetzt sich also auf fertige Tage — die heutige Kerze fliesst nicht ein.
 //  3b. FARBFILTER (UseColorFilter, Standard an): Einstieg nur, wenn unter den letzten
 //     ColorLookback Kerzen (Standard 20, inkl. der gerade geschlossenen) STRIKT MEHR
 //     als MinColorCount (Standard 10) in Handelsrichtung schlossen — bei Short also
@@ -63,6 +68,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private DateTime currentDay = DateTime.MinValue;
 		private bool     enteredToday;
+		private EMA      dailyEma;      // EMA auf der Tages-Zusatzserie (BarsInProgress 1)
 
 		protected override void OnStateChange()
 		{
@@ -98,6 +104,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TradeThursday  = true;
 				TradeFriday    = true;
 				DirectionLong  = true;    // false = short statt long
+				UseDailyEmaFilter = true;
+				DailyEmaPeriod    = 50;
+				DailyEmaAbove     = true;  // true = nur ueber dem Tages-EMA handeln
 				UseColorFilter = true;
 				ColorLookback  = 20;      // wie viele Kerzen vor dem Einstieg gezaehlt werden
 				MinColorCount  = 10;      // STRIKT mehr als dieser Wert muessen passen
@@ -114,6 +123,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				// Der Farbfilter braucht Vorlauf, sonst greift er am Anfang der Serie ins Leere
 				BarsRequiredToTrade = Math.Max(BarsRequiredToTrade, UseColorFilter ? ColorLookback : 1);
+
+				// Tages-Zusatzserie fuer den uebergeordneten Trendfilter.
+				// NinjaTrader verarbeitet von Zusatzserien nur ABGESCHLOSSENE Bars — die
+				// heutige Tageskerze ist um 14:31 also noch nicht dabei. Der EMA-Wert
+				// stammt damit aus abgeschlossenen Tagen, kein Blick in die Zukunft.
+				if (UseDailyEmaFilter)
+					AddDataSeries(BarsPeriodType.Day, 1);
 			}
 			else if (State == State.DataLoaded)
 			{
@@ -133,6 +149,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 						+ " (<= 0). Die Positionsgroesse laesst sich damit nicht aus dem Geldrisiko berechnen, es wird auf "
 						+ Contracts + " Kontrakt(e) zurueckgefallen. Point Value in Control Center -> Tools -> Instruments "
 						+ "fuer " + Instrument.FullName + " pruefen (FDXS = 1).", LogLevel.Warning);
+
+				if (UseDailyEmaFilter)
+					dailyEma = EMA(Closes[1], DailyEmaPeriod);
 
 				if (EnableDebugLog)
 					Print(Name + ": Start — Instrument=" + Instrument.FullName
@@ -232,6 +251,26 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			if (Position.MarketPosition != MarketPosition.Flat)
 				return;
+
+			// ---------- Uebergeordneter Trendfilter: Tages-EMA ----------
+			if (UseDailyEmaFilter)
+			{
+				if (CurrentBars[1] < DailyEmaPeriod)
+					return;                                  // noch nicht genug Tageskerzen
+
+				double lvl   = dailyEma[0];                  // EMA per letzter abgeschlossener Tageskerze
+				bool   above = Close[0] > lvl;
+
+				if (above != DailyEmaAbove)
+				{
+					if (EnableDebugLog)
+						Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " TL: kein Trade — Tages-EMA" + DailyEmaPeriod
+							+ ": Kurs " + Close[0] + (above ? " UEBER " : " UNTER ") + Math.Round(lvl, 2)
+							+ ", verlangt ist " + (DailyEmaAbove ? "darueber" : "darunter"));
+					enteredToday = true;
+					return;
+				}
+			}
 
 			// ---------- Farbfilter: Momentum der letzten Kerzen muss zur Richtung passen ----------
 			if (UseColorFilter)
@@ -348,6 +387,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Richtung: Long", Description = "True (Standard): taeglicher Einstieg LONG. False: SHORT — Stop und Ziel werden dabei gespiegelt. Damit laesst sich dieselbe Uhrzeit in beide Richtungen testen.", Order = 15, GroupName = "02 Wochentage")]
 		public bool DirectionLong { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Tages-EMA-Filter aktiv", Description = "True (Standard): Es wird nur gehandelt, wenn der Kurs auf der richtigen Seite des EMA im TAGESCHART liegt. Fuegt eine Tages-Datenserie hinzu.", Order = 13, GroupName = "03 Signalfilter")]
+		public bool UseDailyEmaFilter { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(2, 500)]
+		[Display(Name = "Tages-EMA Periode", Description = "Periode des EMA auf Tagesbasis. Standard 50.", Order = 14, GroupName = "03 Signalfilter")]
+		public int DailyEmaPeriod { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Nur UEBER dem Tages-EMA", Description = "True (Standard): handeln nur, wenn der Kurs ueber dem Tages-EMA liegt. False: nur darunter — sinnvoll fuer einen Short-Lauf im Abwaertstrend.", Order = 15, GroupName = "03 Signalfilter")]
+		public bool DailyEmaAbove { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Farbfilter aktiv", Description = "True (Standard): Einstieg nur, wenn genug der letzten Kerzen in Handelsrichtung schlossen. Bei Short zaehlen rote Kerzen, bei Long gruene.", Order = 16, GroupName = "03 Signalfilter")]
