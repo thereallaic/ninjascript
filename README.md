@@ -11,6 +11,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
 | `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
 | `Strategies/VolumeSpikeEma50.cs` | VolumeSpikeEma50 | Eigenständiger Ansatz: Long **und** Short 12:00–22:00 (Mo–Do), Volumenausbruch (2×) mit EMA50-Richtungsfilter, Stop auf dem Candle-Open, frei einstellbares R-Ziel |
+| `Strategies/TimedLong.cs` | TimedLong | **Benchmark ohne Signal:** täglich um 16:00 long, Ausstieg 22:00. Messlatte für alle übrigen Strategien |
 
 ---
 
@@ -349,6 +350,47 @@ Ein 5-Punkte-Stop verlangt also 75 % Trefferquote, nur um bei ±0 herauszukommen
 
 - Der Sweep zeigt dir die **Form** der Kurve über R. Ein sauberes Plateau (mehrere benachbarte Werte funktionieren) ist ein gutes Zeichen, ein einzelner Ausreißer ist Rauschen.
 - Den besten Wert aus dem Sweep zu nehmen **ist bereits Optimierung auf diese Daten**. Was dabei herauskommt, gehört auf dem Holdout-Zeitraum gegengeprüft, bevor du ihm glaubst.
+
+---
+
+## TimedLong — Benchmark ohne Signal
+
+Kein Setup, keine Bedingung: **jeden Handelstag um 16:00 long, um 22:00 wieder flat.**
+
+Der Zweck ist nicht, damit Geld zu verdienen, sondern eine **Messlatte** zu haben. Jede der vier Signalstrategien behauptet implizit, mehr zu können als „einfach drin sein". Ob das stimmt, siehst du erst im Vergleich gegen diese Baseline. Schlägt eine Strategie sie nicht, misst sie keinen Edge, sondern die Grunddrift des Marktes im gewählten Fenster — bei einem Aktienindex ist die über die Jahre positiv, das ist keine Leistung deiner Regeln.
+
+1. **Einstieg:** erste Kerze, die um 16:00 oder danach schließt → Market-Order, Fill zum Open der Folgekerze (also ≈ 16:00:00).
+2. **Ausstieg:** erste Kerze, die um 22:00 oder danach schließt.
+3. Genau **ein Trade pro Handelstag**, alle Wochentage einzeln abschaltbar.
+4. **Standardmäßig ohne Stop und Ziel** — die Position läuft die vollen sechs Stunden durch.
+
+### Warum ohne Klammer als Standard
+
+Ohne Stop und Ziel misst die Strategie exakt das, was sie messen soll: die durchschnittliche Kursbewegung von 16:00 bis 22:00. Sobald eine Klammer im Spiel ist, misst du zusätzlich die Wechselwirkung von Stopdistanz und Volatilität — und das verwässert den Benchmark.
+
+Mit `UseStopTarget = true` bekommst du trotzdem eine Variante mit fester Klammer (`StopTicks`, `RewardMultiple`), dann greift auch die Positionsgrößen-Berechnung aus dem Geldrisiko. Sinnvoll, wenn du die Baseline auf **exakt derselben Risikobasis** wie die anderen Strategien vergleichen willst.
+
+> Ohne Klammer gibt es keine Stopdistanz und damit keine Bezugsgröße für ein Geldrisiko — die Positionsgröße ist dann schlicht `Contracts` (Standard 1). Ein Vergleich des Net Profit mit den 100-€-Risiko-Strategien ist in diesem Modus also nicht direkt möglich; aussagekräftig sind Trefferquote, Erwartung pro Trade und die Form der Equity-Kurve.
+
+### Parameter
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `EntryHour` / `EntryMinute` | **16** / 0 | Uhrzeit des täglichen Einstiegs |
+| `ExitHour` / `ExitMinute` | 22 / 0 | Uhrzeit des Ausstiegs |
+| `TradeMonday` … `TradeFriday` | alle true | Wochentage einzeln abschaltbar |
+| `UseStopTarget` | **false** | false = reine Drift-Messung · true = feste Stop/Ziel-Klammer |
+| `StopTicks` | 50 | Stopdistanz in Ticks (FDXS: 1 Tick = 1 Punkt), nur bei aktiver Klammer |
+| `RewardMultiple` | 1 | Ziel in R, nur bei aktiver Klammer |
+| `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße aus dem Geldrisiko, nur bei aktiver Klammer |
+| `Contracts` | 1 | Feste Größe ohne Klammer bzw. bei `UseFixedRisk = false` |
+| `EnableDebugLog` | false | Loggt jeden Ein- und Ausstieg |
+
+### So nutzt du den Benchmark
+
+1. TimedLong über **denselben Zeitraum, dasselbe Instrument, dieselben Kosten** laufen lassen wie die anderen Strategien.
+2. Vergleichsgrößen: **Erwartung pro Trade**, Profit Factor, Max Drawdown — nicht Net Profit (unterschiedliche Positionsgrößen).
+3. Die Einstiegszeit ist ein Parameter: Ein Sweep über `EntryHour` zeigt dir, ob es am FDXS überhaupt Tageszeiten mit systematischer Drift gibt. Das ist als Diagnose nützlich — aber die beste Stunde aus so einem Sweep zu übernehmen wäre wieder Optimierung auf die Testdaten.
 
 ---
 
