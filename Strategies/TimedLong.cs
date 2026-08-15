@@ -31,12 +31,14 @@ using NinjaTrader.NinjaScript.DrawingTools;
 // Grunddrift des Marktes im gewaehlten Zeitfenster.
 //
 // Regelwerk:
-//  1. Einstieg long bei der ersten Kerze, die um EntryHour:EntryMinute (Standard 16:00)
+//  1. Einstieg bei der ersten Kerze, die um EntryHour:EntryMinute (Standard 16:00)
 //     oder danach schliesst. Market-Order -> Fill zum Open der Folgekerze.
+//     Richtung ueber DirectionLong: true = LONG (Standard), false = SHORT.
+//     Bei Short werden Stop und Ziel gespiegelt.
 //  2. Ausstieg bei der ersten Kerze, die um ExitHour:ExitMinute (Standard 22:00)
 //     oder danach schliesst.
 //  3. Genau ein Trade pro Handelstag.
-//  4. Optionale Stop/Ziel-Klammer (UseStopTarget, Standard AUS):
+//  4. Optionale Stop/Ziel-Klammer (UseStopTarget, Standard AN):
 //        Stop = Einstieg - StopTicks x TickSize
 //        Ziel = Einstieg + RewardMultiple x StopTicks x TickSize
 //     Ohne Klammer laeuft die Position bis zum Zeit-Ausstieg — das ist die reine
@@ -51,7 +53,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public class TimedLong : Strategy
 	{
-		private const string SignalLong = "TL_Long";
+		private const string SignalLong  = "TL_Long";
+		private const string SignalShort = "TL_Short";
 
 		private DateTime currentDay = DateTime.MinValue;
 		private bool     enteredToday;
@@ -89,6 +92,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TradeWednesday = true;
 				TradeThursday  = true;
 				TradeFriday    = true;
+				DirectionLong  = true;    // false = short statt long
 				UseStopTarget  = true;    // Klammer aktiv, damit RiskAmount/RewardMultiple greifen
 				StopTicks      = 50;
 				RewardMultiple = 1;
@@ -180,11 +184,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (barClose >= exitTime)
 			{
 				if (Position.MarketPosition == MarketPosition.Long)
-				{
 					ExitLong("TimeExit", SignalLong);
-					if (EnableDebugLog)
-						Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " TL: Zeit-Ausstieg @ " + Close[0]);
-				}
+				else if (Position.MarketPosition == MarketPosition.Short)
+					ExitShort("TimeExit", SignalShort);
+				else
+					return;
+
+				if (EnableDebugLog)
+					Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " TL: Zeit-Ausstieg @ " + Close[0]);
 				return;
 			}
 
@@ -198,25 +205,32 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (Position.MarketPosition != MarketPosition.Flat)
 				return;
 
-			int qty = CalcQuantity();
+			int    qty          = CalcQuantity();
+			string signal       = DirectionLong ? SignalLong : SignalShort;
+			double stopDistance = StopTicks * TickSize;
+			double stopLevel    = Instrument.MasterInstrument.RoundToTickSize(
+				DirectionLong ? Close[0] - stopDistance : Close[0] + stopDistance);
+			double targetLevel  = Instrument.MasterInstrument.RoundToTickSize(
+				DirectionLong ? Close[0] + RewardMultiple * stopDistance
+				              : Close[0] - RewardMultiple * stopDistance);
 
 			if (UseStopTarget)
 			{
-				double stopDistance = StopTicks * TickSize;
-				SetStopLoss(SignalLong, CalculationMode.Price,
-					Instrument.MasterInstrument.RoundToTickSize(Close[0] - stopDistance), false);
-				SetProfitTarget(SignalLong, CalculationMode.Price,
-					Instrument.MasterInstrument.RoundToTickSize(Close[0] + RewardMultiple * stopDistance));
+				SetStopLoss(signal, CalculationMode.Price, stopLevel, false);
+				SetProfitTarget(signal, CalculationMode.Price, targetLevel);
 			}
 
-			EnterLong(qty, SignalLong);
+			if (DirectionLong)
+				EnterLong(qty, SignalLong);
+			else
+				EnterShort(qty, SignalShort);
+
 			enteredToday = true;
 
 			if (EnableDebugLog)
-				Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " TL: LONG " + qty + " @ " + Close[0]
+				Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " TL: " + (DirectionLong ? "LONG " : "SHORT ") + qty + " @ " + Close[0]
 					+ (UseStopTarget
-						? " | Stop=" + Instrument.MasterInstrument.RoundToTickSize(Close[0] - StopTicks * TickSize)
-						  + " | Ziel=" + Instrument.MasterInstrument.RoundToTickSize(Close[0] + RewardMultiple * StopTicks * TickSize)
+						? " | Stop=" + stopLevel + " | Ziel=" + targetLevel
 						: " | ohne Klammer, Ausstieg per Zeit"));
 		}
 
@@ -230,14 +244,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			if (execution.Order.OrderState != OrderState.Filled && execution.Order.OrderState != OrderState.PartFilled)
 				return;
-			if (execution.Order.Name != SignalLong)
+			bool isLong = execution.Order.Name == SignalLong;
+			if (!isLong && execution.Order.Name != SignalShort)
 				return;
 
 			double stopDistance = StopTicks * TickSize;
-			SetStopLoss(SignalLong, CalculationMode.Price,
-				Instrument.MasterInstrument.RoundToTickSize(price - stopDistance), false);
-			SetProfitTarget(SignalLong, CalculationMode.Price,
-				Instrument.MasterInstrument.RoundToTickSize(price + RewardMultiple * stopDistance));
+			string signal       = isLong ? SignalLong : SignalShort;
+
+			SetStopLoss(signal, CalculationMode.Price,
+				Instrument.MasterInstrument.RoundToTickSize(isLong ? price - stopDistance : price + stopDistance), false);
+			SetProfitTarget(signal, CalculationMode.Price,
+				Instrument.MasterInstrument.RoundToTickSize(isLong ? price + RewardMultiple * stopDistance
+				                                                   : price - RewardMultiple * stopDistance));
 		}
 
 		#region Properties
@@ -280,6 +298,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Freitag handeln", Order = 14, GroupName = "02 Wochentage")]
 		public bool TradeFriday { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Richtung: Long", Description = "True (Standard): taeglicher Einstieg LONG. False: SHORT — Stop und Ziel werden dabei gespiegelt. Damit laesst sich dieselbe Uhrzeit in beide Richtungen testen.", Order = 15, GroupName = "02 Wochentage")]
+		public bool DirectionLong { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Stop/Ziel-Klammer aktiv", Description = "False (Standard): kein Stop, kein Ziel — die Position laeuft bis zum Zeit-Ausstieg. Das ist die reine Drift-Messung. True: feste Klammer wie unten eingestellt.", Order = 20, GroupName = "03 Risiko")]
