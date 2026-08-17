@@ -43,10 +43,6 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //     true = darueber, false = darunter). Dafuer wird eine Tages-Zusatzserie geladen.
 //     Von Zusatzserien verarbeitet NinjaTrader nur ABGESCHLOSSENE Bars, der EMA
 //     stuetzt sich also auf fertige Tage — die heutige Kerze fliesst nicht ein.
-//  3aa. VOLUMEN-VETO (UseVolumeVeto, Standard AUS): Hatte EINE der letzten
-//     VolumeVetoLookback Kerzen (Standard 5, inkl. der gerade geschlossenen) mehr als
-//     VolumeVetoMultiple (Standard 2,0) x das Durchschnittsvolumen der letzten
-//     VolumeVetoAvgPeriod Kerzen (Standard 20), wird NICHT eingestiegen.
 //  3b. FARBFILTER (UseColorFilter, Standard an): Einstieg nur, wenn unter den letzten
 //     ColorLookback Kerzen (Standard 20, inkl. der gerade geschlossenen) STRIKT MEHR
 //     als MinColorCount (Standard 10) in Handelsrichtung schlossen — bei Short also
@@ -84,7 +80,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private DateTime currentDay = DateTime.MinValue;
 		private bool     enteredToday;
 		private EMA      dailyEma;      // EMA auf der Tages-Zusatzserie (BarsInProgress 1)
-		private SMA      volAvg;            // Durchschnittsvolumen auf der Primaerserie
 		private ATR      dailyAtr;          // ATR auf der Tages-Zusatzserie
 		private SMA      dailyAtrAvg;       // langfristiger Mittelwert derselben ATR
 		private double   activeStopDistance;// 1R dieser Position in Kurseinheiten
@@ -128,10 +123,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				UseDailyEmaFilter = true;
 				DailyEmaPeriod    = 50;
 				DailyEmaAbove     = true;  // true = nur ueber dem Tages-EMA handeln
-				UseVolumeVeto       = false;  // Standard aus, damit Vergleichslaeufe sauber bleiben
-				VolumeVetoLookback  = 5;
-				VolumeVetoAvgPeriod = 20;
-				VolumeVetoMultiple  = 2.0;
 				UseColorFilter = true;
 				ColorLookback  = 20;      // wie viele Kerzen vor dem Einstieg gezaehlt werden
 				MinColorCount  = 10;      // STRIKT mehr als dieser Wert muessen passen
@@ -155,8 +146,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				// Der Farbfilter braucht Vorlauf, sonst greift er am Anfang der Serie ins Leere
 				BarsRequiredToTrade = Math.Max(BarsRequiredToTrade, UseColorFilter ? ColorLookback : 1);
-				if (UseVolumeVeto)
-					BarsRequiredToTrade = Math.Max(BarsRequiredToTrade, VolumeVetoAvgPeriod + VolumeVetoLookback);
 
 				// Tages-Zusatzserie fuer den uebergeordneten Trendfilter.
 				// NinjaTrader verarbeitet von Zusatzserien nur ABGESCHLOSSENE Bars — die
@@ -186,9 +175,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				if (UseDailyEmaFilter)
 					dailyEma = EMA(Closes[1], DailyEmaPeriod);
-
-				if (UseVolumeVeto)
-					volAvg = SMA(Volume, VolumeVetoAvgPeriod);
 
 				if (UseAtrStop)
 				{
@@ -325,33 +311,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					+ " (MFE " + Math.Round(mfeR, 2) + "R)" + (clamped ? " | auf Marktnaehe begrenzt" : ""));
 		}
 
-		// Volumen-Veto: Hatte EINE der letzten VolumeVetoLookback Kerzen (inkl. der gerade
-		// geschlossenen) mehr als VolumeVetoMultiple x das Durchschnittsvolumen der letzten
-		// VolumeVetoAvgPeriod Kerzen, wird nicht eingestiegen.
-		//
-		// Gedanke dahinter: Ein frischer Volumenausbruch heisst, dass gerade etwas passiert
-		// ist — in so eine Bewegung hinein einzusteigen ist etwas anderes als in ruhigen
-		// Handel. Der Durchschnitt umfasst die geprueften Kerzen mit (woertliche Lesart
-		// "der letzten 20"); ein Ausreisser hebt damit leicht seine eigene Messlatte, was
-		// den Filter minimal konservativer macht.
-		private bool VolumeVetoTriggered()
-		{
-			if (!UseVolumeVeto)
-				return false;
-			if (CurrentBar < VolumeVetoAvgPeriod + VolumeVetoLookback)
-				return true;                               // ohne Vorlauf kein Urteil -> kein Trade
-
-			double avg = volAvg[0];
-			if (avg <= 0)
-				return false;
-
-			double thr = VolumeVetoMultiple * avg;
-			for (int i = 0; i < VolumeVetoLookback; i++)
-				if (Volume[i] > thr)
-					return true;
-			return false;
-		}
-
 		private bool IsTradingDay(DayOfWeek d)
 		{
 			switch (d)
@@ -427,22 +386,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 					enteredToday = true;
 					return;
 				}
-			}
-
-			// ---------- Volumen-Veto: kein Einstieg direkt nach einem Volumenausbruch ----------
-			if (UseVolumeVeto && VolumeVetoTriggered())
-			{
-				if (EnableDebugLog)
-				{
-					double a = volAvg != null && CurrentBar >= VolumeVetoAvgPeriod ? volAvg[0] : 0;
-					double mx = 0;
-					for (int i = 0; i < VolumeVetoLookback && i <= CurrentBar; i++) mx = Math.Max(mx, Volume[i]);
-					Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " TL: kein Trade — Volumen-Veto: hoechstes Volumen "
-						+ mx + " in den letzten " + VolumeVetoLookback + " Kerzen > " + VolumeVetoMultiple
-						+ " x Schnitt " + Math.Round(a, 0));
-				}
-				enteredToday = true;
-				return;
 			}
 
 			// ---------- Farbfilter: Momentum der letzten Kerzen muss zur Richtung passen ----------
@@ -579,25 +522,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Nur UEBER dem Tages-EMA", Description = "True (Standard): handeln nur, wenn der Kurs ueber dem Tages-EMA liegt. False: nur darunter — sinnvoll fuer einen Short-Lauf im Abwaertstrend.", Order = 15, GroupName = "03 Signalfilter")]
 		public bool DailyEmaAbove { get; set; }
-
-		[NinjaScriptProperty]
-		[Display(Name = "Volumen-Veto aktiv", Description = "True: Hatte eine der letzten Kerzen vor dem Einstieg mehr als das Vielfache des Durchschnittsvolumens, wird NICHT eingestiegen. Standard aus.", Order = 19, GroupName = "03 Signalfilter")]
-		public bool UseVolumeVeto { get; set; }
-
-		[NinjaScriptProperty]
-		[Range(1, 100)]
-		[Display(Name = "Volumen-Veto: Kerzen zurueck", Description = "Wie viele Kerzen vor dem Einstieg auf einen Ausbruch geprueft werden, inklusive der gerade geschlossenen. Standard 5.", Order = 20, GroupName = "03 Signalfilter")]
-		public int VolumeVetoLookback { get; set; }
-
-		[NinjaScriptProperty]
-		[Range(2, 500)]
-		[Display(Name = "Volumen-Veto: Schnitt ueber", Description = "Ueber wie viele Kerzen das Vergleichs-Durchschnittsvolumen gebildet wird. Standard 20.", Order = 21, GroupName = "03 Signalfilter")]
-		public int VolumeVetoAvgPeriod { get; set; }
-
-		[NinjaScriptProperty]
-		[Range(1.1, 20)]
-		[Display(Name = "Volumen-Veto: Faktor", Description = "Ab welchem Vielfachen des Durchschnitts eine Kerze als Ausbruch gilt und den Einstieg blockiert. Standard 2,0.", Order = 22, GroupName = "03 Signalfilter")]
-		public double VolumeVetoMultiple { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Farbfilter aktiv", Description = "True (Standard): Einstieg nur, wenn genug der letzten Kerzen in Handelsrichtung schlossen. Bei Short zaehlen rote Kerzen, bei Long gruene.", Order = 16, GroupName = "03 Signalfilter")]
