@@ -562,6 +562,7 @@ Zwei Wächter verwerfen unbrauchbare Signale und loggen den Grund:
 
 - **Entry-Marker**: Dreieck + „Long"/„Short" an der Signalkerze, optional Stop- (Open der Signalkerze) und R-Ziel-Linien.
 - **Kerzenfärbung**: `barcolor()` färbt die Körper der echten Chart-Kerzen direkt um — Vector Candles grün/rot (Farben einstellbar), alle übrigen hellgrau (aufwärts) / dunkelgrau (abwärts). Docht und Rand kann ein TradingView-Indikator nicht setzen; sie kommen aus den Chart-Einstellungen (Symbol → Kerzen) und stehen dort standardmäßig bereits auf grün/rot.
+- **Handelsfenster-Hintergrund**: Kerzen, in denen ein Einstieg möglich wäre (Fenster + aktivierter Wochentag), werden dezent blau hinterlegt (Farbe/Schalter einstellbar).
 - **PDH/PDL** werden aus der abgeschlossenen Tageskerze gelesen (`high[1]`/`low[1]` mit `lookahead_on`) — kein Repaint.
 - **Alerts**: `PDR Long` / `PDR Short` sind als `alertcondition` hinterlegt; bei der Alert-Einrichtung „Einmal pro Kerzenschluss" wählen.
 

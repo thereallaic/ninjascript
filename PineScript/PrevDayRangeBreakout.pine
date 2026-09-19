@@ -66,6 +66,8 @@ midweekR     = input.float(2.0, "R-Ziel Mi/Do", minval = 0.25, step = 0.25,     
 maxPerDay    = input.int(1, "Max. Signale pro Tag (0 = unbegrenzt)", minval = 0, group = g4)
 showLevels   = input.bool(true, "Stop/Ziel-Linien zeichnen",                    group = g4)
 showPdLines  = input.bool(true, "PDH/PDL-Linien anzeigen",                      group = g4)
+showWindow   = input.bool(true, "Handelsfenster einfaerben",
+     tooltip = "Faerbt den Hintergrund der Kerzen, in denen ein Einstieg moeglich waere (Fenster + aktivierter Wochentag).", group = g4)
 
 // ---------- 05 Farben ----------
 g5           = "05 Farben"
@@ -75,6 +77,7 @@ colBodyUp    = input.color(color.new(#d1d4dc, 0),  "Standard-Koerper hellgrau", 
 colBodyDown  = input.color(color.new(#4a4e59, 0),  "Standard-Koerper dunkelgrau", group = g5)
 colEdgeUp    = input.color(color.new(#26a69a, 0),  "Signal-Farbe gruen (Marker/Linien)", group = g5)
 colEdgeDown  = input.color(color.new(#ef5350, 0),  "Signal-Farbe rot (Marker/Linien)",   group = g5)
+colWindow    = input.color(color.new(#2962ff, 88), "Hintergrund Handelsfenster",         group = g5)
 
 // ---------- Vortageslevel (kein Repaint: abgeschlossene Tageskerze) ----------
 pdh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
@@ -126,6 +129,11 @@ if longSig or shortSig
 // Einstellungen (Standard dort: gruen/rot).
 bodyCol = vecUp ? colVecUp : vecDown ? colVecDown : close >= open ? colBodyUp : colBodyDown
 barcolor(bodyCol, title = "Kerzenkoerper (Vector/Standard)")
+
+// ---------- Handelsfenster-Hintergrund ----------
+// Faerbt genau die Kerzen, in denen ein Signal entstehen koennte: Schlusszeit im
+// Fenster UND der Wochentag ist zum Handeln aktiviert.
+bgcolor(showWindow and inWindow and dayOk ? colWindow : na, title = "Handelsfenster")
 
 // ---------- PDH/PDL ----------
 plot(showPdLines ? pdh : na, "Vortageshoch (PDH)", color = color.new(#26a69a, 35), style = plot.style_linebr, linewidth = 1)
