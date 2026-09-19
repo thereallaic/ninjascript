@@ -41,8 +41,9 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //     unter dem Close, bei einer roten darueber — der Stop sitzt also automatisch auf
 //     der richtigen Seite. MinStopTicks / MaxStopTicks verwerfen Signale, deren
 //     Abstand zu eng (Rauschen, absurde Positionsgroesse) oder zu weit ist.
-//  6. Ziel = RewardMultiple x Stopdistanz (Standard 3R), nach dem Fill auf den echten
-//     Einstiegskurs nachgerechnet.
+//  6. Ziel = R-Multiple x Stopdistanz, fuer Long und Short getrennt einstellbar
+//     (Standard je 3R), nach dem Fill auf den echten Einstiegskurs nachgerechnet.
+//     Optional eigenes R-Ziel fuer Mittwoch/Donnerstag (hat Vorrang).
 //  7. Positionsgroesse aus festem Geldrisiko. Max. MaxTradesPerDay Trades pro Tag.
 //
 // Zeitzone: Tools > Options > General > Time zone muss auf Berlin stehen.
@@ -106,7 +107,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				// Risiko
 				MinStopTicks         = 8;
 				MaxStopTicks         = 120;
-				RewardMultiple       = 3;
+				RewardMultipleLong   = 3;
+				RewardMultipleShort  = 3;
 				UseMidweekReward     = false; // Standard AUS — Analyse spricht dagegen, s. README
 				MidweekRewardMultiple = 2;
 				UseFixedRisk         = true;
@@ -144,7 +146,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						+ " | Fenster " + StartHour.ToString("00") + ":" + StartMinute.ToString("00")
 						+ "-" + EndHour.ToString("00") + ":" + EndMinute.ToString("00")
 						+ " | Vector " + (VectorVolumeMultiple * 100) + " % ueber " + VectorVolumeLookback + " Kerzen"
-						+ " | Ziel " + RewardMultiple + "R");
+						+ " | Ziel Long " + RewardMultipleLong + "R / Short " + RewardMultipleShort + "R");
 			}
 		}
 
@@ -254,13 +256,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TryEnter(false);
 		}
 
-		// R-Ziel fuer den jeweiligen Tag: Mittwoch/Donnerstag koennen ein eigenes
-		// (typischerweise kleineres) Multiple bekommen, alle anderen Tage nutzen RewardMultiple.
-		private double RewardFor(DayOfWeek d)
+		// R-Ziel fuer Tag und Richtung: Mittwoch/Donnerstag koennen ein eigenes
+		// (typischerweise kleineres) Multiple bekommen — das hat Vorrang. Sonst gilt
+		// das Long- bzw. Short-R.
+		private double RewardFor(DayOfWeek d, bool isLong)
 		{
 			if (UseMidweekReward && (d == DayOfWeek.Wednesday || d == DayOfWeek.Thursday))
 				return MidweekRewardMultiple;
-			return RewardMultiple;
+			return isLong ? RewardMultipleLong : RewardMultipleShort;
 		}
 
 		// Stop = Open der Signalkerze. Distanz fuer Groesse und Ziel wird zunaechst ab
@@ -295,7 +298,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 
-			double reward = RewardFor(Time[0].DayOfWeek);
+			double reward = RewardFor(Time[0].DayOfWeek, isLong);
 			double target = Instrument.MasterInstrument.RoundToTickSize(
 				isLong ? Close[0] + reward * dist : Close[0] - reward * dist);
 
@@ -436,35 +439,40 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		[NinjaScriptProperty]
 		[Range(0.25, 20)]
-		[Display(Name = "R-Ziel (Reward-Multiple)", Description = "Ziel = Einstieg +/- Multiple x Stopdistanz. Standard 3.", Order = 32, GroupName = "04 Risiko")]
-		public double RewardMultiple { get; set; }
+		[Display(Name = "R-Ziel Long", Description = "Ziel fuer Longs = Einstieg + Multiple x Stopdistanz. Standard 3.", Order = 32, GroupName = "04 Risiko")]
+		public double RewardMultipleLong { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "R-Ziel Mi/Do separat", Description = "True: Mittwoch und Donnerstag nutzen das eigene R-Ziel unten statt des normalen. Standard AUS — die Datenanalyse spricht dagegen (s. README).", Order = 37, GroupName = "04 Risiko")]
+		[Range(0.25, 20)]
+		[Display(Name = "R-Ziel Short", Description = "Ziel fuer Shorts = Einstieg - Multiple x Stopdistanz. Standard 3.", Order = 33, GroupName = "04 Risiko")]
+		public double RewardMultipleShort { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "R-Ziel Mi/Do separat", Description = "True: Mittwoch und Donnerstag nutzen das eigene R-Ziel unten statt des normalen. Standard AUS — die Datenanalyse spricht dagegen (s. README).", Order = 34, GroupName = "04 Risiko")]
 		public bool UseMidweekReward { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(0.25, 20)]
-		[Display(Name = "R-Ziel Mi/Do", Description = "Reward-Multiple nur fuer Mittwoch und Donnerstag. Wirkt nur, wenn 'R-Ziel Mi/Do separat' an ist UND die Tage ueberhaupt gehandelt werden.", Order = 38, GroupName = "04 Risiko")]
+		[Display(Name = "R-Ziel Mi/Do", Description = "Reward-Multiple nur fuer Mittwoch und Donnerstag. Wirkt nur, wenn 'R-Ziel Mi/Do separat' an ist UND die Tage ueberhaupt gehandelt werden.", Order = 35, GroupName = "04 Risiko")]
 		public double MidweekRewardMultiple { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Groesse aus Geldrisiko", Description = "True (Standard): Kontraktzahl so, dass ein Stopout etwa dem Betrag unten entspricht.", Order = 33, GroupName = "04 Risiko")]
+		[Display(Name = "Groesse aus Geldrisiko", Description = "True (Standard): Kontraktzahl so, dass ein Stopout etwa dem Betrag unten entspricht.", Order = 36, GroupName = "04 Risiko")]
 		public bool UseFixedRisk { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000000)]
-		[Display(Name = "Risiko je Trade", Description = "Geldbetrag in Instrumentenwaehrung, den ein Stopout kostet.", Order = 34, GroupName = "04 Risiko")]
+		[Display(Name = "Risiko je Trade", Description = "Geldbetrag in Instrumentenwaehrung, den ein Stopout kostet.", Order = 37, GroupName = "04 Risiko")]
 		public double RiskAmount { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000)]
-		[Display(Name = "Max. Kontrakte", Order = 35, GroupName = "04 Risiko")]
+		[Display(Name = "Max. Kontrakte", Order = 38, GroupName = "04 Risiko")]
 		public int MaxContracts { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000)]
-		[Display(Name = "Kontrakte (fest)", Description = "Nur wenn 'Groesse aus Geldrisiko' aus ist.", Order = 36, GroupName = "04 Risiko")]
+		[Display(Name = "Kontrakte (fest)", Description = "Nur wenn 'Groesse aus Geldrisiko' aus ist.", Order = 39, GroupName = "04 Risiko")]
 		public int Contracts { get; set; }
 
 		[NinjaScriptProperty]

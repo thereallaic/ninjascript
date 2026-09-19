@@ -541,7 +541,7 @@ Zwei Wächter verwerfen unbrauchbare Signale und loggen den Grund:
 | `VectorVolumeLookback` | **20** | Durchschnitt über so viele **vorhergehende** Kerzen |
 | `AllowLong` / `AllowShort` | true / true | Richtungen einzeln testbar |
 | `MinStopTicks` / `MaxStopTicks` | 8 / 120 | Distanz-Wächter |
-| `RewardMultiple` | **3** | Ziel = 3 × Stopdistanz |
+| `RewardMultipleLong` / `RewardMultipleShort` | **3** / **3** | R-Ziel getrennt für Long und Short |
 | `UseMidweekReward` | **false** | Mi/Do bekommen ein eigenes R-Ziel (s. u.) |
 | `MidweekRewardMultiple` | 2 | R-Ziel nur für Mi/Do, wenn der Schalter an ist |
 | `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße |

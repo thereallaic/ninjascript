@@ -56,7 +56,8 @@ allowShort = input.bool(true, "Short erlauben", group = g3)
 g4           = "04 Risiko / Anzeige"
 minStopTicks = input.int(8,   "Mindest-Stopdistanz (Ticks)", minval = 0,        group = g4)
 maxStopTicks = input.int(120, "Maximale Stopdistanz (Ticks)", minval = 1,       group = g4)
-rewardMult   = input.float(3.0, "R-Ziel (Reward-Multiple)", minval = 0.25, step = 0.25, group = g4)
+rewardLong   = input.float(3.0, "R-Ziel Long",  minval = 0.25, step = 0.25,     group = g4)
+rewardShort  = input.float(3.0, "R-Ziel Short", minval = 0.25, step = 0.25,     group = g4)
 maxPerDay    = input.int(1, "Max. Signale pro Tag (0 = unbegrenzt)", minval = 0, group = g4)
 showLevels   = input.bool(true, "Stop/Ziel-Linien zeichnen",                    group = g4)
 showPdLines  = input.bool(true, "PDH/PDL-Linien anzeigen",                      group = g4)
@@ -132,13 +133,14 @@ plotshape(shortSig, title = "Short-Signal", style = shape.triangledown, location
 
 // ---------- Stop/Ziel-Linien ----------
 if showLevels and (longSig or shortSig)
+    float rr     = longSig ? rewardLong : rewardShort
     float stopP  = open
     float dist   = longSig ? distLong : distShort
-    float target = longSig ? close + rewardMult * dist : close - rewardMult * dist
+    float target = longSig ? close + rr * dist : close - rr * dist
     line.new(bar_index, stopP,  bar_index + 10, stopP,  color = colEdgeDown, width = 2)
     line.new(bar_index, target, bar_index + 10, target, color = colEdgeUp,   width = 2)
-    label.new(bar_index + 10, stopP,  "Stop",                                    style = label.style_label_left, color = color.new(colEdgeDown, 80), textcolor = colEdgeDown, size = size.small)
-    label.new(bar_index + 10, target, str.tostring(rewardMult, "#.##") + "R", style = label.style_label_left, color = color.new(colEdgeUp, 80),   textcolor = colEdgeUp,   size = size.small)
+    label.new(bar_index + 10, stopP,  "Stop",                             style = label.style_label_left, color = color.new(colEdgeDown, 80), textcolor = colEdgeDown, size = size.small)
+    label.new(bar_index + 10, target, str.tostring(rr, "#.##") + "R", style = label.style_label_left, color = color.new(colEdgeUp, 80),   textcolor = colEdgeUp,   size = size.small)
 
 // ---------- Alerts (Ausloesung "Einmal pro Kerzenschluss" waehlen!) ----------
 alertcondition(longSig,  "PDR Long",  "PrevDayRangeBreakout: LONG-Signal — Vector Candle schliesst ueber dem Vortageshoch.")
