@@ -13,8 +13,9 @@
 //     Short, wenn sie unter dem Vortagestief schliesst.
 //     Vector Candle = Volumen >= Faktor x Durchschnitt der N VORHERGEHENDEN Kerzen
 //     (die Signalkerze zaehlt nicht in ihre eigene Messlatte) UND gruen (Long) / rot (Short).
-//  4. Stop laege auf dem OPEN der Signalkerze, Ziel = R-Multiple x Distanz —
-//     beides wird optional als Linien eingezeichnet.
+//  4. Stop laege auf dem OPEN der Signalkerze, Ziel = R-Multiple x Distanz (fuer Long
+//     und Short getrennt, optional eigenes R fuer Mi/Do — wie in der NT-Strategie).
+//     Beides wird optional als Linien eingezeichnet.
 //  5. Mindest-/Maximal-Stopdistanz (Ticks) verwerfen Signale wie in der Strategie.
 //  6. Max. Signale pro Tag begrenzbar (Standard 1), Wochentage einzeln abschaltbar.
 //
@@ -58,6 +59,9 @@ minStopTicks = input.int(8,   "Mindest-Stopdistanz (Ticks)", minval = 0,        
 maxStopTicks = input.int(120, "Maximale Stopdistanz (Ticks)", minval = 1,       group = g4)
 rewardLong   = input.float(3.0, "R-Ziel Long",  minval = 0.25, step = 0.25,     group = g4)
 rewardShort  = input.float(3.0, "R-Ziel Short", minval = 0.25, step = 0.25,     group = g4)
+useMidweekR  = input.bool(false, "R-Ziel Mi/Do separat",
+     tooltip = "Mittwoch und Donnerstag nutzen das eigene R-Ziel unten statt des Long/Short-R. Standard AUS — die Datenanalyse spricht dagegen (s. README).", group = g4)
+midweekR     = input.float(2.0, "R-Ziel Mi/Do", minval = 0.25, step = 0.25,     group = g4)
 maxPerDay    = input.int(1, "Max. Signale pro Tag (0 = unbegrenzt)", minval = 0, group = g4)
 showLevels   = input.bool(true, "Stop/Ziel-Linien zeichnen",                    group = g4)
 showPdLines  = input.bool(true, "PDH/PDL-Linien anzeigen",                      group = g4)
@@ -133,7 +137,8 @@ plotshape(shortSig, title = "Short-Signal", style = shape.triangledown, location
 
 // ---------- Stop/Ziel-Linien ----------
 if showLevels and (longSig or shortSig)
-    float rr     = longSig ? rewardLong : rewardShort
+    bool  midwk  = wd == dayofweek.wednesday or wd == dayofweek.thursday
+    float rr     = useMidweekR and midwk ? midweekR : longSig ? rewardLong : rewardShort
     float stopP  = open
     float dist   = longSig ? distLong : distShort
     float target = longSig ? close + rr * dist : close - rr * dist
