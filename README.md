@@ -513,6 +513,21 @@ Der Vorteil gegenüber einem Volatilitätsfilter: Es fallen **keine Trades weg**
 
 **Modus 2 — Retest:** Nach einem solchen Ausbruch muss der Kurs das Level noch einmal **berühren** (`Low ≤ PDH + Toleranz`) und wieder darüber **schließen**. Besserer Einstiegskurs und engerer Stop, aber es fehlen die Tage, an denen der Ausbruch ohne Rücklauf durchläuft.
 
+### Der Auslöser: Vector Candle
+
+Über dem Level allein wird nicht eingestiegen — die Signalkerze muss eine **Vector Candle** sein:
+
+```
+Volumen ≥ 2,0 × Durchschnitt der 20 VORHERGEHENDEN Kerzen
+UND  Long: Close > Open (grün)   ·   Short: Close < Open (rot)
+```
+
+Der Durchschnitt wird über `volAvg[1]` gelesen — die Signalkerze zählt **nicht** in ihre eigene Messlatte. Sonst würde eine Volumenspitze den Schwellwert selbst anheben und das Signal umso schwächer, je stärker der Ausbruch ist.
+
+Die Bedingung wirkt auf **beide** Einstiegsmodi: In Modus 1 muss die Ausbruchskerze eine Vector Candle sein, in Modus 2 die Retest-Kerze. Mit `RequireVectorCandle = false` bekommst du den reinen Level-Ausbruch — das ist dein Vergleichslauf.
+
+Im Debug-Log erscheinen Kerzen, bei denen das **Level passte, aber die Vector-Bedingung nicht** — inklusive des tatsächlichen Volumens gegen den nötigen Wert. Daran siehst du direkt, wie viele Ausbrüche der Filter kostet.
+
 ### `RequireFreshBreak` — der wichtigste Schalter
 
 Steht der Kurs um 15:30 bereits über dem PDH, würde Modus 1 **sofort um 15:31 einsteigen**. Die Strategie wäre dann kein Ausbruch mehr, sondern ein Zeit-Einstieg mit Level-Filter — also faktisch `TimedLong` mit einer Zusatzbedingung.
@@ -538,6 +553,9 @@ Beide verwerfen das Signal und loggen den Grund. Wie oft das passiert, ist eine 
 | `CloseAtWindowEnd` | true | Position um 17:00 schließen |
 | `TradeMonday` … `TradeFriday` | alle true | Einzeln abschaltbar |
 | `EntryMode` | **1** | 1 = Ausbruch · 2 = Retest |
+| `RequireVectorCandle` | **true** | Signalkerze muss Vector Candle sein |
+| `VectorVolumeMultiple` | **2.0** | 200 % des Durchschnittsvolumens |
+| `VectorVolumeLookback` | **20** | Durchschnitt über so viele **vorhergehende** Kerzen |
 | `RequireFreshBreak` | **true** | s. o. |
 | `RetestToleranceTicks` | 4 | Nur Modus 2 |
 | `AllowLong` / `AllowShort` | true / true | Richtungen einzeln testbar |

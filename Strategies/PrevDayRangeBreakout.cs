@@ -40,6 +40,11 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //       1 = AUSBRUCH: erste Kerze im Fenster, die jenseits des Levels SCHLIESST.
 //       2 = RETEST:   nach einem solchen Ausbruch muss der Kurs das Level noch einmal
 //                     beruehren (Low <= PDH + Toleranz) und darueber schliessen.
+//  3b. VECTOR CANDLE (RequireVectorCandle, Standard an): Die Signalkerze muss
+//     mindestens VectorVolumeMultiple (Standard 2,0 = 200 %) des Durchschnittsvolumens
+//     der VectorVolumeLookback VORHERGEHENDEN Kerzen haben UND in Handelsrichtung
+//     schliessen — bei Long gruen, bei Short rot. Der Durchschnitt wird ueber
+//     volAvg[1] gelesen, die Signalkerze zaehlt also NICHT in ihre eigene Messlatte.
 //  4. FRISCHER AUSBRUCH (RequireFreshBreak, Standard an): Der Kurs muss im Fenster
 //     mindestens einmal DIESSEITS des Levels geschlossen haben, bevor der Ausbruch
 //     zaehlt. Ohne diese Bedingung wuerde die Strategie an Tagen, an denen der Kurs
@@ -73,6 +78,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool   longBroke;    // eine Kerze schloss ueber PDH
 		private bool   shortBroke;   // eine Kerze schloss unter PDL
 
+		private SMA    volAvg;       // Durchschnittsvolumen der vorhergehenden Kerzen
 		private double activeStopLevel;
 		private double activeStopDistance;
 
@@ -113,6 +119,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TradeFriday          = true;
 				// Einstieg
 				EntryMode            = 1;     // 1 = Ausbruch, 2 = Retest
+				RequireVectorCandle  = true;  // Ausloeser: Vector Candle
+				VectorVolumeMultiple = 2.0;   // 200 % des Durchschnitts
+				VectorVolumeLookback = 20;    // ... der 20 VORHERGEHENDEN Kerzen
 				RequireFreshBreak    = true;
 				RetestToleranceTicks = 4;
 				AllowLong            = true;
@@ -135,11 +144,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				// Tagesserie fuer PDH/PDL — Pflicht, nicht optional
 				AddDataSeries(BarsPeriodType.Day, 1);
+
+				if (RequireVectorCandle)
+					BarsRequiredToTrade = Math.Max(BarsRequiredToTrade, VectorVolumeLookback + 1);
 			}
 			else if (State == State.DataLoaded)
 			{
 				if (BarsPeriod.BarsPeriodType != BarsPeriodType.Minute || BarsPeriod.Value != 1)
 					Log(Name + ": Bitte eine 1-Minuten-Datenserie verwenden (aktuell: " + BarsPeriod + ").", LogLevel.Warning);
+
+				if (RequireVectorCandle)
+					volAvg = SMA(Volume, VectorVolumeLookback);
 
 				if (UseFixedRisk && Instrument.MasterInstrument.PointValue <= 0)
 					Log(Name + ": PointValue ist " + Instrument.MasterInstrument.PointValue
@@ -154,6 +169,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 						+ " | frischer Ausbruch: " + RequireFreshBreak
 						+ " | Ziel " + RewardMultiple + "R");
 			}
+		}
+
+		// Vector Candle: hohes Volumen UND Koerper in Handelsrichtung.
+		//
+		// Der Durchschnitt wird ueber volAvg[1] gelesen, also ueber die VORHERGEHENDEN
+		// Kerzen ohne die aktuelle. Sonst zoege eine Volumenspitze ihre eigene Messlatte
+		// nach oben und das Signal wuerde umso schwaecher, je staerker der Ausbruch ist.
+		private bool IsVectorCandle(bool isLong)
+		{
+			if (!RequireVectorCandle)
+				return true;
+			if (volAvg == null || CurrentBars[0] < VectorVolumeLookback + 1)
+				return false;
+
+			double avg = volAvg[1];
+			if (avg <= 0)
+				return false;
+
+			bool volumeOk = Volume[0] >= VectorVolumeMultiple * avg;
+			bool colorOk  = isLong ? Close[0] > Open[0] : Close[0] < Open[0];
+			return volumeOk && colorOk;
 		}
 
 		private int CalcQuantity(double stopDistance)
@@ -240,22 +276,26 @@ namespace NinjaTrader.NinjaScript.Strategies
 				// ---------- Long: oberhalb des Vortageshochs ----------
 				if (AllowLong && (longArmed || !RequireFreshBreak))
 				{
-					bool trigger = EntryMode == 2
+					bool levelOk = EntryMode == 2
 						? (longBroke && Low[0] <= pdh + RetestToleranceTicks * TickSize && Close[0] > pdh)
 						: (Close[0] > pdh);
 
-					if (trigger && TryEnter(true, pdh))
+					if (levelOk && !IsVectorCandle(true))
+						LogVectorMiss(true);
+					else if (levelOk && TryEnter(true, pdh))
 						return;
 				}
 
 				// ---------- Short: unterhalb des Vortagestiefs ----------
 				if (AllowShort && (shortArmed || !RequireFreshBreak))
 				{
-					bool trigger = EntryMode == 2
+					bool levelOk = EntryMode == 2
 						? (shortBroke && High[0] >= pdl - RetestToleranceTicks * TickSize && Close[0] < pdl)
 						: (Close[0] < pdl);
 
-					if (trigger && TryEnter(false, pdl))
+					if (levelOk && !IsVectorCandle(false))
+						LogVectorMiss(false);
+					else if (levelOk && TryEnter(false, pdl))
 						return;
 				}
 			}
@@ -267,6 +307,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (Close[0] >  pdh) longBroke  = true;
 			if (Close[0] >= pdl) shortArmed = true;
 			if (Close[0] <  pdl) shortBroke = true;
+		}
+
+		// Nur protokollieren, wenn das Level bereits passte — sonst waere der Log voll
+		// mit Kerzen, die ohnehin nie in Frage kamen.
+		private void LogVectorMiss(bool isLong)
+		{
+			if (!EnableDebugLog)
+				return;
+			double avg = volAvg != null && CurrentBars[0] >= VectorVolumeLookback + 1 ? volAvg[1] : 0;
+			bool colorOk = isLong ? Close[0] > Open[0] : Close[0] < Open[0];
+			Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " PDR: Level ok, aber keine Vector Candle ("
+				+ (isLong ? "Long" : "Short") + ") — Vol " + Volume[0]
+				+ " vs. " + Math.Round(VectorVolumeMultiple * avg, 0) + " noetig"
+				+ (colorOk ? "" : ", Farbe passt nicht"));
 		}
 
 		// Gibt true zurueck, wenn tatsaechlich eine Order abgesetzt wurde.
@@ -420,6 +474,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Range(1, 2)]
 		[Display(Name = "Einstiegsmodus (1=Ausbruch, 2=Retest)", Description = "1: erste Kerze, die jenseits des Levels schliesst. 2: nach dem Ausbruch muss der Kurs das Level noch einmal beruehren und darueber/darunter schliessen.", Order = 20, GroupName = "03 Einstieg")]
 		public int EntryMode { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Vector Candle noetig", Description = "True (Standard): Die Signalkerze muss mindestens das eingestellte Vielfache des Durchschnittsvolumens haben UND in Handelsrichtung schliessen (Long gruen, Short rot). False: reiner Level-Ausbruch ohne Volumenbedingung — der Vergleichslauf.", Order = 25, GroupName = "03 Einstieg")]
+		public bool RequireVectorCandle { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(1.0, 20)]
+		[Display(Name = "Vector: Volumen-Faktor", Description = "Vielfaches des Durchschnittsvolumens. 2,0 = 200 Prozent (Standard).", Order = 26, GroupName = "03 Einstieg")]
+		public double VectorVolumeMultiple { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(2, 500)]
+		[Display(Name = "Vector: Durchschnitt ueber", Description = "Ueber wie viele VORHERGEHENDE Kerzen der Volumendurchschnitt gebildet wird. Die Signalkerze selbst zaehlt nicht mit. Standard 20.", Order = 27, GroupName = "03 Einstieg")]
+		public int VectorVolumeLookback { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Frischer Ausbruch noetig", Description = "True (Standard): Der Kurs muss im Fenster erst diesseits des Levels geschlossen haben. False: Es genuegt, jenseits zu stehen — dann wird an Tagen mit Kurs bereits ueber PDH sofort um 15:31 eingestiegen.", Order = 21, GroupName = "03 Einstieg")]
