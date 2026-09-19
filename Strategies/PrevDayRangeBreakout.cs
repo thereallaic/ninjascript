@@ -61,6 +61,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private SMA    volAvg;       // Durchschnittsvolumen der vorhergehenden Kerzen
 		private double activeStopLevel;
+		private double activeReward;  // R-Ziel des laufenden Trades (kann am Mi/Do abweichen)
 
 		protected override void OnStateChange()
 		{
@@ -106,6 +107,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				MinStopTicks         = 8;
 				MaxStopTicks         = 120;
 				RewardMultiple       = 3;
+				UseMidweekReward     = false; // Standard AUS — Analyse spricht dagegen, s. README
+				MidweekRewardMultiple = 2;
 				UseFixedRisk         = true;
 				RiskAmount           = 100;
 				MaxContracts         = 50;
@@ -131,6 +134,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 					Log(Name + ": PointValue ist " + Instrument.MasterInstrument.PointValue
 						+ " (<= 0). Positionsgroesse aus Geldrisiko nicht berechenbar, es wird auf "
 						+ Contracts + " Kontrakt(e) zurueckgefallen.", LogLevel.Warning);
+
+				if (UseMidweekReward && !TradeWednesday && !TradeThursday)
+					Log(Name + ": 'R-Ziel Mi/Do separat' ist AN, aber Mittwoch und Donnerstag sind beide"
+						+ " abgeschaltet — die Einstellung hat so keine Wirkung.", LogLevel.Warning);
 
 				if (EnableDebugLog)
 					Print(Name + ": Start — " + Instrument.FullName
@@ -247,6 +254,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TryEnter(false);
 		}
 
+		// R-Ziel fuer den jeweiligen Tag: Mittwoch/Donnerstag koennen ein eigenes
+		// (typischerweise kleineres) Multiple bekommen, alle anderen Tage nutzen RewardMultiple.
+		private double RewardFor(DayOfWeek d)
+		{
+			if (UseMidweekReward && (d == DayOfWeek.Wednesday || d == DayOfWeek.Thursday))
+				return MidweekRewardMultiple;
+			return RewardMultiple;
+		}
+
 		// Stop = Open der Signalkerze. Distanz fuer Groesse und Ziel wird zunaechst ab
 		// dem Signal-Close gerechnet; nach dem Fill rechnet OnExecutionUpdate das Ziel
 		// auf den echten Einstiegskurs nach.
@@ -279,10 +295,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 			}
 
+			double reward = RewardFor(Time[0].DayOfWeek);
 			double target = Instrument.MasterInstrument.RoundToTickSize(
-				isLong ? Close[0] + RewardMultiple * dist : Close[0] - RewardMultiple * dist);
+				isLong ? Close[0] + reward * dist : Close[0] - reward * dist);
 
 			activeStopLevel = stopLevel;
+			activeReward    = reward;
 
 			if (isLong)
 			{
@@ -324,7 +342,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				return;
 
 			double target = Instrument.MasterInstrument.RoundToTickSize(
-				isLong ? price + RewardMultiple * risk : price - RewardMultiple * risk);
+				isLong ? price + activeReward * risk : price - activeReward * risk);
 
 			if (isLong)
 			{
@@ -420,6 +438,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Range(0.25, 20)]
 		[Display(Name = "R-Ziel (Reward-Multiple)", Description = "Ziel = Einstieg +/- Multiple x Stopdistanz. Standard 3.", Order = 32, GroupName = "04 Risiko")]
 		public double RewardMultiple { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "R-Ziel Mi/Do separat", Description = "True: Mittwoch und Donnerstag nutzen das eigene R-Ziel unten statt des normalen. Standard AUS — die Datenanalyse spricht dagegen (s. README).", Order = 37, GroupName = "04 Risiko")]
+		public bool UseMidweekReward { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0.25, 20)]
+		[Display(Name = "R-Ziel Mi/Do", Description = "Reward-Multiple nur fuer Mittwoch und Donnerstag. Wirkt nur, wenn 'R-Ziel Mi/Do separat' an ist UND die Tage ueberhaupt gehandelt werden.", Order = 38, GroupName = "04 Risiko")]
+		public double MidweekRewardMultiple { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Groesse aus Geldrisiko", Description = "True (Standard): Kontraktzahl so, dass ein Stopout etwa dem Betrag unten entspricht.", Order = 33, GroupName = "04 Risiko")]

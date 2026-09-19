@@ -541,9 +541,17 @@ Zwei Wächter verwerfen unbrauchbare Signale und loggen den Grund:
 | `AllowLong` / `AllowShort` | true / true | Richtungen einzeln testbar |
 | `MinStopTicks` / `MaxStopTicks` | 8 / 120 | Distanz-Wächter |
 | `RewardMultiple` | **3** | Ziel = 3 × Stopdistanz |
+| `UseMidweekReward` | **false** | Mi/Do bekommen ein eigenes R-Ziel (s. u.) |
+| `MidweekRewardMultiple` | 2 | R-Ziel nur für Mi/Do, wenn der Schalter an ist |
 | `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße |
 | `MaxTradesPerDay` | 1 | 0 = unbegrenzt |
 | `EnableDebugLog` | false | Loggt Einstiege und **verworfene Signale mit Grund** |
+
+### Separates R-Ziel für Mittwoch/Donnerstag
+
+`UseMidweekReward = true` lässt Mi/Do mit `MidweekRewardMultiple` (Standard 2) statt des normalen R-Ziels handeln — gedacht als Experiment, um die schwachen Mitte-der-Woche-Tage zu retten.
+
+**Standard ist AUS, und zwar mit Grund:** Die MFE-Rekonstruktion über den Backtest 2020–2026 (MNQ, 5-min) zeigt, dass ein niedrigeres Ziel Mi/Do *schlechter* macht, nicht besser (2R ≈ −7.500 $ vs. 3R ≈ −5.600 $ auf Mi/Do). Die Mi/Do-Verlierer laufen kaum je ins Plus (nur 5 % erreichen 2R MFE), ein kleineres Ziel kostet also vor allem die vollen 3R-Gewinner. Sind Mittwoch und Donnerstag ohnehin abgeschaltet, ist der Schalter wirkungslos — die Strategie loggt dann eine Warnung.
 
 ---
 
