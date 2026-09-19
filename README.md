@@ -12,6 +12,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
 | `Strategies/VolumeSpikeEma50.cs` | VolumeSpikeEma50 | Eigenständiger Ansatz: Long **und** Short 12:00–22:00 (Mo–Do), Volumenausbruch (2×) mit EMA50-Richtungsfilter, Stop auf dem Candle-Open, frei einstellbares R-Ziel |
 | `Strategies/PrevDayRangeBreakout.cs` | PrevDayRangeBreakout | Vector Candle über dem Vortageshoch / unter dem Vortagestief, 15:30–17:00, Stop am Open der Signalkerze, 3R-Ziel |
+| `PineScript/PrevDayRangeBreakout.pine` | PDR Signale (TradingView) | Pine-v6-Indikator: gleiche Einstiegsbedingungen als Chart-Signale inkl. Vector-Candle-Färbung |
 | `Strategies/TimedLong.cs` | TimedLong | **Benchmark ohne Signal:** täglich um 16:00 long, Ausstieg 22:00. Messlatte für alle übrigen Strategien |
 
 ---
@@ -552,6 +553,21 @@ Zwei Wächter verwerfen unbrauchbare Signale und loggen den Grund:
 `UseMidweekReward = true` lässt Mi/Do mit `MidweekRewardMultiple` (Standard 2) statt des normalen R-Ziels handeln — gedacht als Experiment, um die schwachen Mitte-der-Woche-Tage zu retten.
 
 **Standard ist AUS, und zwar mit Grund:** Die MFE-Rekonstruktion über den Backtest 2020–2026 (MNQ, 5-min) zeigt, dass ein niedrigeres Ziel Mi/Do *schlechter* macht, nicht besser (2R ≈ −7.500 $ vs. 3R ≈ −5.600 $ auf Mi/Do). Die Mi/Do-Verlierer laufen kaum je ins Plus (nur 5 % erreichen 2R MFE), ein kleineres Ziel kostet also vor allem die vollen 3R-Gewinner. Sind Mittwoch und Donnerstag ohnehin abgeschaltet, ist der Schalter wirkungslos — die Strategie loggt dann eine Warnung.
+
+---
+
+## PineScript: PrevDayRangeBreakout für TradingView
+
+`PineScript/PrevDayRangeBreakout.pine` ist die Signal-Portierung der Strategie für TradingView (Pine v6, **Indikator** — zeigt Einstiege an, handelt nicht). Regelwerk identisch zur NT-Strategie: Fenster 15:30–17:00 (Zeitzone einstellbar, Standard Europe/Berlin), Vector Candle (Volumen ≥ Faktor × Durchschnitt der vorherigen N Kerzen, grün/rot in Richtung) schließt über PDH / unter PDL, Stop-Wächter in Ticks, max. Signale pro Tag.
+
+- **Entry-Marker**: Dreieck + „Long"/„Short" an der Signalkerze, optional Stop- (Open der Signalkerze) und R-Ziel-Linien.
+- **Kerzenfärbung**: Vector Candles grün/rot (Farben einstellbar); alle übrigen Kerzen hellgrau (aufwärts) / dunkelgrau (abwärts) mit grünem bzw. rotem Rand und Docht.
+- **PDH/PDL** werden aus der abgeschlossenen Tageskerze gelesen (`high[1]`/`low[1]` mit `lookahead_on`) — kein Repaint.
+- **Alerts**: `PDR Long` / `PDR Short` sind als `alertcondition` hinterlegt; bei der Alert-Einrichtung „Einmal pro Kerzenschluss" wählen.
+
+**Einrichtung**: Pine Editor → Code einfügen → „Zum Chart hinzufügen". Damit die eigene Kerzenfärbung sichtbar ist, die Original-Kerzen ausblenden: Chart-Einstellungen → Symbol → Deckkraft von Körper/Rand/Docht auf 0 (oder den Indikator über „Visuelle Reihenfolge" nach vorn holen). Chart auf 5 Minuten stellen, wenn es dem NT-Backtest entsprechen soll.
+
+Kleine Abweichung zur NT-Strategie: NinjaTrader steigt zur Eröffnung der Folgekerze ein und es gibt dort kein Signal, solange eine Position offen ist. Der Indikator kennt keine Positionen — er begrenzt stattdessen über „Max. Signale pro Tag" (Standard 1), was bei 1 Trade/Tag auf dasselbe hinausläuft.
 
 ---
 
