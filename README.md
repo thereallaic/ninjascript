@@ -544,9 +544,20 @@ Zwei Wächter verwerfen unbrauchbare Signale und loggen den Grund:
 | `RewardMultipleLong` / `RewardMultipleShort` | **3** / **3** | R-Ziel getrennt für Long und Short |
 | `UseMidweekReward` | **false** | Mi/Do bekommen ein eigenes R-Ziel (s. u.) |
 | `MidweekRewardMultiple` | 2 | R-Ziel nur für Mi/Do, wenn der Schalter an ist |
+| `UseBreakEvenLong` / `UseBreakEvenShort` | **true** / **false** | Stop einmalig auf Einstand ziehen (s. u.) |
+| `BreakEvenTriggerR` / `BreakEvenOffsetR` | 3 / 0 | Trigger und Ziel-Level des Break-Even in R |
 | `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße |
 | `MaxTradesPerDay` | 1 | 0 = unbegrenzt |
 | `EnableDebugLog` | false | Loggt Einstiege und **verworfene Signale mit Grund** |
+
+### Break-Even-Stop (getrennt für Long und Short)
+
+Erreicht der Kurs `BreakEvenTriggerR` (Standard 3R, gerechnet ab dem echten Fill), wird der Stop **einmalig** auf Einstand + `BreakEvenOffsetR` gezogen (Offset 0 = exakt 0R). `UseBreakEvenLong` ist standardmäßig **an**, `UseBreakEvenShort` **aus** — gedacht für den Test „Ziel 4R, aber ab 3R nichts mehr zurückgeben".
+
+Wichtig:
+- Der Trigger muss **unter** dem R-Ziel der Richtung liegen (z. B. Trigger 3 bei `RewardMultipleLong = 4`), sonst füllt das Ziel immer zuerst und der Break-Even wirkt nie — die Strategie warnt beim Start.
+- Die Strategie läuft `OnBarClose`: Der Trigger gilt als erreicht, wenn High/Low der abgeschlossenen Kerze ihn berührt hat. Ob der Kurs innerhalb derselben Kerze erst den Trigger und dann den alten Stop anlief, ist auf Kerzenbasis nicht feststellbar — **der Backtest ist bei diesem Feature also eher optimistisch.** Zur Einordnung: Die MFE-Analyse der bisherigen Läufe zeigte, dass nur wenige Verlierer überhaupt 3R MFE erreichen; erwarte vom Break-Even eher einen kleinen Effekt.
+- Der Stop wird nie verschlechtert und bleibt immer mindestens 1 Tick vom aktuellen Schlusskurs entfernt.
 
 ### Separates R-Ziel für Mittwoch/Donnerstag
 

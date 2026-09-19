@@ -62,7 +62,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private SMA    volAvg;       // Durchschnittsvolumen der vorhergehenden Kerzen
 		private double activeStopLevel;
-		private double activeReward;  // R-Ziel des laufenden Trades (kann am Mi/Do abweichen)
+		private double activeReward;      // R-Ziel des laufenden Trades (kann am Mi/Do abweichen)
+		private double activeEntryPrice;  // echter Fill-Kurs (fuer Break-Even)
+		private double activeRisk;        // Risiko je Einheit ab Fill (fuer Break-Even)
+		private bool   beMoved;           // Break-Even wurde fuer diesen Trade schon gezogen
 
 		protected override void OnStateChange()
 		{
@@ -111,6 +114,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				RewardMultipleShort  = 3;
 				UseMidweekReward     = false; // Standard AUS — Analyse spricht dagegen, s. README
 				MidweekRewardMultiple = 2;
+				UseBreakEvenLong     = true;  // zum Testen: Trigger 3R bei Ziel 4R
+				UseBreakEvenShort    = false;
+				BreakEvenTriggerR    = 3.0;
+				BreakEvenOffsetR     = 0.0;
 				UseFixedRisk         = true;
 				RiskAmount           = 100;
 				MaxContracts         = 50;
@@ -140,6 +147,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (UseMidweekReward && !TradeWednesday && !TradeThursday)
 					Log(Name + ": 'R-Ziel Mi/Do separat' ist AN, aber Mittwoch und Donnerstag sind beide"
 						+ " abgeschaltet — die Einstellung hat so keine Wirkung.", LogLevel.Warning);
+
+				// Trigger >= Ziel: das Ziel wird immer zuerst erreicht, der Break-Even
+				// zieht dann nie — derselbe Totlauf wie damals beim Trailing-Stop.
+				if (UseBreakEvenLong && AllowLong && BreakEvenTriggerR >= RewardMultipleLong)
+					Log(Name + ": Break-Even Long ist AN, aber Trigger (" + BreakEvenTriggerR
+						+ "R) >= R-Ziel Long (" + RewardMultipleLong + "R) — das Ziel fuellt zuerst,"
+						+ " der Break-Even wirkt nie. R-Ziel Long erhoehen (z. B. 4) oder Trigger senken.", LogLevel.Warning);
+				if (UseBreakEvenShort && AllowShort && BreakEvenTriggerR >= RewardMultipleShort)
+					Log(Name + ": Break-Even Short ist AN, aber Trigger (" + BreakEvenTriggerR
+						+ "R) >= R-Ziel Short (" + RewardMultipleShort + "R) — das Ziel fuellt zuerst,"
+						+ " der Break-Even wirkt nie.", LogLevel.Warning);
 
 				if (EnableDebugLog)
 					Print(Name + ": Start — " + Instrument.FullName
@@ -207,6 +225,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				currentDay  = Time[0].Date;
 				tradesToday = 0;
 			}
+
+			// Break-Even VOR der Fensterlogik verwalten, damit er auch greift, wenn die
+			// Position (CloseAtWindowEnd = false) ueber das Fensterende hinaus laeuft.
+			if (Position.MarketPosition != MarketPosition.Flat)
+				ManageBreakEven();
 
 			TimeSpan barClose    = Time[0].TimeOfDay;
 			TimeSpan windowStart = new TimeSpan(StartHour, StartMinute, 0);
@@ -302,8 +325,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			double target = Instrument.MasterInstrument.RoundToTickSize(
 				isLong ? Close[0] + reward * dist : Close[0] - reward * dist);
 
-			activeStopLevel = stopLevel;
-			activeReward    = reward;
+			activeStopLevel  = stopLevel;
+			activeReward     = reward;
+			activeEntryPrice = Close[0];   // vorlaeufig — OnExecutionUpdate ersetzt durch echten Fill
+			activeRisk       = dist;
+			beMoved          = false;
 
 			if (isLong)
 			{
@@ -326,6 +352,54 @@ namespace NinjaTrader.NinjaScript.Strategies
 					+ " | Ziel " + target + " | Trade " + tradesToday + " heute");
 		}
 
+		// Break-Even: Hat der Kurs den Trigger (in R ab dem echten Fill) erreicht, wird
+		// der Stop einmalig auf Einstand + Offset gezogen. Getrennt schaltbar fuer Long
+		// und Short. Laeuft OnBarClose: Der Trigger gilt als erreicht, wenn High/Low der
+		// abgeschlossenen Kerze ihn beruehrt hat; ob der Kurs INNERHALB dieser Kerze erst
+		// den Trigger und dann den alten Stop anlief (oder umgekehrt), ist auf Kerzenbasis
+		// nicht feststellbar — der Backtest ist hier also eher optimistisch.
+		private void ManageBreakEven()
+		{
+			if (beMoved || activeRisk <= 0)
+				return;
+
+			bool isLong = Position.MarketPosition == MarketPosition.Long;
+			if (isLong && !UseBreakEvenLong)
+				return;
+			if (!isLong && !UseBreakEvenShort)
+				return;
+
+			if (isLong)
+			{
+				if (High[0] < activeEntryPrice + BreakEvenTriggerR * activeRisk)
+					return;
+				double newStop = Instrument.MasterInstrument.RoundToTickSize(
+					activeEntryPrice + BreakEvenOffsetR * activeRisk);
+				newStop = Math.Min(newStop, Close[0] - TickSize);   // Stop muss unter dem Markt bleiben
+				if (newStop <= activeStopLevel)
+					return;                                          // nur verbessern, nie verschlechtern
+				SetStopLoss(SignalLong, CalculationMode.Price, newStop, false);
+				activeStopLevel = newStop;
+			}
+			else
+			{
+				if (Low[0] > activeEntryPrice - BreakEvenTriggerR * activeRisk)
+					return;
+				double newStop = Instrument.MasterInstrument.RoundToTickSize(
+					activeEntryPrice - BreakEvenOffsetR * activeRisk);
+				newStop = Math.Max(newStop, Close[0] + TickSize);   // Stop muss ueber dem Markt bleiben
+				if (newStop >= activeStopLevel)
+					return;
+				SetStopLoss(SignalShort, CalculationMode.Price, newStop, false);
+				activeStopLevel = newStop;
+			}
+
+			beMoved = true;
+			if (EnableDebugLog)
+				Print(Time[0].ToString("yyyy-MM-dd HH:mm") + " PDR: Break-Even gezogen — Stop jetzt "
+					+ activeStopLevel + " (Trigger " + BreakEvenTriggerR + "R, Offset " + BreakEvenOffsetR + "R)");
+		}
+
 		// Stop bleibt auf dem Open der Signalkerze; das Ziel wird auf den echten Fill
 		// nachgerechnet, damit das R-Verhaeltnis auch nach Slippage stimmt.
 		protected override void OnExecutionUpdate(Execution execution, string executionId, double price,
@@ -343,6 +417,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 			double risk = isLong ? price - activeStopLevel : activeStopLevel - price;
 			if (risk < TickSize)
 				return;
+
+			activeEntryPrice = price;  // Break-Even rechnet ab dem echten Fill
+			activeRisk       = risk;
 
 			double target = Instrument.MasterInstrument.RoundToTickSize(
 				isLong ? price + activeReward * risk : price - activeReward * risk);
@@ -455,6 +532,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Range(0.25, 20)]
 		[Display(Name = "R-Ziel Mi/Do", Description = "Reward-Multiple nur fuer Mittwoch und Donnerstag. Wirkt nur, wenn 'R-Ziel Mi/Do separat' an ist UND die Tage ueberhaupt gehandelt werden.", Order = 35, GroupName = "04 Risiko")]
 		public double MidweekRewardMultiple { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Break-Even Long aktiv", Description = "True (Standard): Bei Longs wird der Stop einmalig auf Einstand + Offset gezogen, sobald der Kurs den Trigger erreicht. Der Trigger muss UNTER dem R-Ziel liegen (z. B. Trigger 3, Ziel 4), sonst fuellt das Ziel zuerst.", Order = 41, GroupName = "04 Risiko")]
+		public bool UseBreakEvenLong { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Break-Even Short aktiv", Description = "Wie Break-Even Long, nur fuer Shorts. Standard AUS.", Order = 42, GroupName = "04 Risiko")]
+		public bool UseBreakEvenShort { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0.25, 20)]
+		[Display(Name = "Break-Even Trigger (R)", Description = "Ab wie viel R Gewinn (ab dem echten Fill) der Stop gezogen wird. Standard 3.", Order = 43, GroupName = "04 Risiko")]
+		public double BreakEvenTriggerR { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(-5, 10)]
+		[Display(Name = "Break-Even Offset (R)", Description = "Wohin der Stop gezogen wird: 0 = exakt Einstand (Standard), 0,5 = ein halbes R im Gewinn gesichert, negativ = knapp unter/ueber Einstand.", Order = 44, GroupName = "04 Risiko")]
+		public double BreakEvenOffsetR { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Groesse aus Geldrisiko", Description = "True (Standard): Kontraktzahl so, dass ein Stopout etwa dem Betrag unten entspricht.", Order = 36, GroupName = "04 Risiko")]
