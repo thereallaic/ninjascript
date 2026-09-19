@@ -11,6 +11,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
 | `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
 | `Strategies/VolumeSpikeEma50.cs` | VolumeSpikeEma50 | Eigenständiger Ansatz: Long **und** Short 12:00–22:00 (Mo–Do), Volumenausbruch (2×) mit EMA50-Richtungsfilter, Stop auf dem Candle-Open, frei einstellbares R-Ziel |
+| `Strategies/PrevDayRangeBreakout.cs` | PrevDayRangeBreakout | Ausbruch über das Vortageshoch / unter das Vortagestief im US-Fenster 15:30–17:00, Stop am Level, umschaltbarer Auslöser |
 | `Strategies/TimedLong.cs` | TimedLong | **Benchmark ohne Signal:** täglich um 16:00 long, Ausstieg 22:00. Messlatte für alle übrigen Strategien |
 
 ---
@@ -493,6 +494,60 @@ Der Vorteil gegenüber einem Volatilitätsfilter: Es fallen **keine Trades weg**
 1. TimedLong über **denselben Zeitraum, dasselbe Instrument, dieselben Kosten** laufen lassen wie die anderen Strategien.
 2. Vergleichsgrößen: **Erwartung pro Trade**, Profit Factor, Max Drawdown — nicht Net Profit (unterschiedliche Positionsgrößen).
 3. Die Einstiegszeit ist ein Parameter: Ein Sweep über `EntryHour` zeigt dir, ob es am FDXS überhaupt Tageszeiten mit systematischer Drift gibt. Das ist als Diagnose nützlich — aber die beste Stunde aus so einem Sweep zu übernehmen wäre wieder Optimierung auf die Testdaten.
+
+---
+
+## PrevDayRangeBreakout — Vortagesrange-Ausbruch
+
+**Long nur oberhalb des Vortageshochs (PDH), Short nur unterhalb des Vortagestiefs (PDL).** Das Level ist dabei die *Erlaubnis* — der eigentliche Auslöser ist über `EntryMode` umschaltbar.
+
+1. **Handelsfenster:** 15:30–17:00 (US-Kassaeröffnung). Position wird um 17:00 glattgestellt.
+2. **Referenzlevel:** Hoch und Tief der letzten **abgeschlossenen** Tageskerze (`Highs[1][0]` / `Lows[1][0]`). NinjaTrader liefert von Zusatzserien nur fertige Bars — der heutige Tag fließt nicht ein, kein Look-ahead.
+3. **Auslöser:** `EntryMode = 1` (Ausbruch) oder `2` (Retest).
+4. **Stop** strukturell auf dem gebrochenen Level ± Offset, **Ziel** = `RewardMultiple` × Stopdistanz.
+5. Max. 1 Trade pro Tag, alle Wochentage einzeln abschaltbar.
+
+### Die zwei Einstiegsmodi
+
+**Modus 1 — Ausbruch:** Erste Kerze im Fenster, die jenseits des Levels **schließt**. Einstieg zum Schluss dieser Kerze.
+
+**Modus 2 — Retest:** Nach einem solchen Ausbruch muss der Kurs das Level noch einmal **berühren** (`Low ≤ PDH + Toleranz`) und wieder darüber **schließen**. Besserer Einstiegskurs und engerer Stop, aber es fehlen die Tage, an denen der Ausbruch ohne Rücklauf durchläuft.
+
+### `RequireFreshBreak` — der wichtigste Schalter
+
+Steht der Kurs um 15:30 bereits über dem PDH, würde Modus 1 **sofort um 15:31 einsteigen**. Die Strategie wäre dann kein Ausbruch mehr, sondern ein Zeit-Einstieg mit Level-Filter — also faktisch `TimedLong` mit einer Zusatzbedingung.
+
+Mit `RequireFreshBreak = true` (Standard) muss der Kurs im Fenster erst mindestens einmal **diesseits** des Levels schließen, bevor ein Ausbruch zählt. Der Zustand wird bewusst **nach** der Einstiegsprüfung fortgeschrieben, damit sich eine Kerze nicht selbst scharfschaltet.
+
+### Stop und die beiden Distanz-Wächter
+
+Der Stop sitzt standardmäßig auf dem gebrochenen Level ± `StopOffsetTicks` — strukturell begründet und selbstanpassend. Daraus folgt ein Problem, das zwei Parameter abfangen:
+
+| Fall | Wächter | Warum |
+|---|---|---|
+| Auslöser feuert direkt am Level | `MinStopTicks` (8) | Stop im Rauschen, Positionsgröße schießt hoch |
+| Kurs schon weit über dem Level | `MaxStopTicks` (120) | R-Ziel läge unrealistisch weit weg |
+
+Beide verwerfen das Signal und loggen den Grund. Wie oft das passiert, ist eine der ersten Zahlen, die du dir anschauen solltest.
+
+### Parameter
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `StartHour`/`Minute`, `EndHour`/`Minute` | 15:30 / 17:00 | Handelsfenster |
+| `CloseAtWindowEnd` | true | Position um 17:00 schließen |
+| `TradeMonday` … `TradeFriday` | alle true | Einzeln abschaltbar |
+| `EntryMode` | **1** | 1 = Ausbruch · 2 = Retest |
+| `RequireFreshBreak` | **true** | s. o. |
+| `RetestToleranceTicks` | 4 | Nur Modus 2 |
+| `AllowLong` / `AllowShort` | true / true | Richtungen einzeln testbar |
+| `StopAtLevel` | true | Stop am Level statt fester Distanz |
+| `StopOffsetTicks` | 4 | Puffer hinter dem Level |
+| `MinStopTicks` / `MaxStopTicks` | 8 / 120 | Distanz-Wächter |
+| `RewardMultiple` | **2** | Zum Durchtesten von 1 bis 3 |
+| `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße |
+| `MaxTradesPerDay` | 1 | 0 = unbegrenzt |
+| `EnableDebugLog` | false | Loggt Einstiege und **verworfene Signale mit Grund** |
 
 ---
 
