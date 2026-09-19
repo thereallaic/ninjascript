@@ -561,11 +561,11 @@ Zwei Wächter verwerfen unbrauchbare Signale und loggen den Grund:
 `PineScript/PrevDayRangeBreakout.pine` ist die Signal-Portierung der Strategie für TradingView (Pine v6, **Indikator** — zeigt Einstiege an, handelt nicht). Regelwerk identisch zur NT-Strategie: Fenster 15:30–17:00 (Zeitzone einstellbar, Standard Europe/Berlin), Vector Candle (Volumen ≥ Faktor × Durchschnitt der vorherigen N Kerzen, grün/rot in Richtung) schließt über PDH / unter PDL, Stop-Wächter in Ticks, max. Signale pro Tag.
 
 - **Entry-Marker**: Dreieck + „Long"/„Short" an der Signalkerze, optional Stop- (Open der Signalkerze) und R-Ziel-Linien.
-- **Kerzenfärbung**: Vector Candles grün/rot (Farben einstellbar); alle übrigen Kerzen hellgrau (aufwärts) / dunkelgrau (abwärts) mit grünem bzw. rotem Rand und Docht.
+- **Kerzenfärbung**: `barcolor()` färbt die Körper der echten Chart-Kerzen direkt um — Vector Candles grün/rot (Farben einstellbar), alle übrigen hellgrau (aufwärts) / dunkelgrau (abwärts). Docht und Rand kann ein TradingView-Indikator nicht setzen; sie kommen aus den Chart-Einstellungen (Symbol → Kerzen) und stehen dort standardmäßig bereits auf grün/rot.
 - **PDH/PDL** werden aus der abgeschlossenen Tageskerze gelesen (`high[1]`/`low[1]` mit `lookahead_on`) — kein Repaint.
 - **Alerts**: `PDR Long` / `PDR Short` sind als `alertcondition` hinterlegt; bei der Alert-Einrichtung „Einmal pro Kerzenschluss" wählen.
 
-**Einrichtung**: Pine Editor → Code einfügen → „Zum Chart hinzufügen". Damit die eigene Kerzenfärbung sichtbar ist, die Original-Kerzen ausblenden: Chart-Einstellungen → Symbol → Deckkraft von Körper/Rand/Docht auf 0 (oder den Indikator über „Visuelle Reihenfolge" nach vorn holen). Chart auf 5 Minuten stellen, wenn es dem NT-Backtest entsprechen soll.
+**Einrichtung**: Pine Editor → Code einfügen → „Zum Chart hinzufügen" — die Kerzenfärbung greift sofort, nichts muss ausgeblendet werden. Chart auf 5 Minuten stellen, wenn es dem NT-Backtest entsprechen soll.
 
 Kleine Abweichung zur NT-Strategie: NinjaTrader steigt zur Eröffnung der Folgekerze ein und es gibt dort kein Signal, solange eine Position offen ist. Der Indikator kennt keine Positionen — er begrenzt stattdessen über „Max. Signale pro Tag" (Standard 1), was bei 1 Trade/Tag auf dasselbe hinausläuft.
 

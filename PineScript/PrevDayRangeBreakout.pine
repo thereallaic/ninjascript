@@ -19,11 +19,12 @@
 //  5. Mindest-/Maximal-Stopdistanz (Ticks) verwerfen Signale wie in der Strategie.
 //  6. Max. Signale pro Tag begrenzbar (Standard 1), Wochentage einzeln abschaltbar.
 //
-// Kerzenfaerbung: Vector Candles gruen/rot (einstellbar). Alle uebrigen Kerzen
-// hellgrau (aufwaerts) / dunkelgrau (abwaerts) mit gruenem bzw. rotem Rand und Docht.
-// WICHTIG: Damit die Faerbung sichtbar ist, die Original-Kerzen ausblenden:
-// Chart-Einstellungen -> Symbol -> Deckkraft von Koerper/Rand/Docht auf 0
-// (oder den Indikator per "Visuelle Reihenfolge" nach vorne holen).
+// Kerzenfaerbung: barcolor() faerbt die KOERPER der echten Chart-Kerzen direkt um —
+// Vector Candles gruen/rot (einstellbar), alle uebrigen hellgrau (aufwaerts) /
+// dunkelgrau (abwaerts). Kein Ausblenden der Original-Kerzen noetig.
+// Docht und Rand kann ein Indikator in TradingView NICHT setzen — die kommen aus den
+// Chart-Einstellungen (Symbol -> Kerzen -> Docht/Rand) und stehen dort standardmaessig
+// bereits auf gruen/rot. Dort ggf. einmalig pruefen.
 // =====================================================================================
 indicator("PrevDayRangeBreakout Signale", shorttitle = "PDR Signale", overlay = true,
      max_lines_count = 500, max_labels_count = 500)
@@ -72,8 +73,8 @@ colVecUp     = input.color(color.new(#26a69a, 0),  "Vector Candle gruen",       
 colVecDown   = input.color(color.new(#ef5350, 0),  "Vector Candle rot",         group = g5)
 colBodyUp    = input.color(color.new(#d1d4dc, 0),  "Standard-Koerper hellgrau", group = g5)
 colBodyDown  = input.color(color.new(#4a4e59, 0),  "Standard-Koerper dunkelgrau", group = g5)
-colEdgeUp    = input.color(color.new(#26a69a, 0),  "Rand/Docht gruen",          group = g5)
-colEdgeDown  = input.color(color.new(#ef5350, 0),  "Rand/Docht rot",            group = g5)
+colEdgeUp    = input.color(color.new(#26a69a, 0),  "Signal-Farbe gruen (Marker/Linien)", group = g5)
+colEdgeDown  = input.color(color.new(#ef5350, 0),  "Signal-Farbe rot (Marker/Linien)",   group = g5)
 
 // ---------- Vortageslevel (kein Repaint: abgeschlossene Tageskerze) ----------
 pdh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
@@ -120,10 +121,11 @@ if longSig or shortSig
     sigsToday += 1
 
 // ---------- Kerzenfaerbung ----------
+// barcolor() uebersteuert den Koerper der ECHTEN Chart-Kerzen — zuverlaessig sichtbar,
+// ohne die Original-Kerzen auszublenden. Docht/Rand bleiben Sache der Chart-
+// Einstellungen (Standard dort: gruen/rot).
 bodyCol = vecUp ? colVecUp : vecDown ? colVecDown : close >= open ? colBodyUp : colBodyDown
-edgeCol = close >= open ? colEdgeUp : colEdgeDown
-plotcandle(open, high, low, close, title = "PDR Kerzen",
-     color = bodyCol, wickcolor = edgeCol, bordercolor = edgeCol)
+barcolor(bodyCol, title = "Kerzenkoerper (Vector/Standard)")
 
 // ---------- PDH/PDL ----------
 plot(showPdLines ? pdh : na, "Vortageshoch (PDH)", color = color.new(#26a69a, 35), style = plot.style_linebr, linewidth = 1)
