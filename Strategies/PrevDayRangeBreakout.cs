@@ -3,7 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
@@ -67,6 +69,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double activeRisk;        // Risiko je Einheit ab Fill (fuer Break-Even)
 		private bool   beMoved;           // Break-Even wurde fuer diesen Trade schon gezogen
 
+		// ---------- Signal-Bridge ----------
+		// Ein HttpClient fuer alle Instanzen; niemals im Strategie-Thread blockieren.
+		private static readonly HttpClient signalHttp = new HttpClient() { Timeout = TimeSpan.FromSeconds(10) };
+		private string   currentTradeId;      // eindeutige Kennung des laufenden Trades
+		private bool     entrySignalSent;     // Entry nur einmal senden (Teilfills)
+		private bool     senderBlocked;       // z. B. Nicht-Sim-Konto -> Sender aus
+		private DateTime lastHeartbeatUtc = DateTime.MinValue;
+
 		protected override void OnStateChange()
 		{
 			if (State == State.SetDefaults)
@@ -124,6 +134,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				Contracts            = 1;
 				MaxTradesPerDay      = 1;
 				EnableDebugLog       = false;
+				// Signal-Bridge
+				EnableSignalSender   = false;  // Standard AUS — nur fuer den Live-Signalbetrieb
+				SignalUrl            = "";
+				SignalSecret         = "";
+				HeartbeatMinutes     = 5;
 			}
 			else if (State == State.Configure)
 			{
@@ -166,6 +181,125 @@ namespace NinjaTrader.NinjaScript.Strategies
 						+ " | Vector " + (VectorVolumeMultiple * 100) + " % ueber " + VectorVolumeLookback + " Kerzen"
 						+ " | Ziel Long " + RewardMultipleLong + "R / Short " + RewardMultipleShort + "R");
 			}
+			else if (State == State.Realtime)
+			{
+				// Schutzgurt: Der Sender laeuft NUR auf einem Sim-Konto. Auf einem echten
+				// Konto wird er hart deaktiviert — echte Orders macht nur die Bridge bei Propr.
+				if (EnableSignalSender && Account != null
+					&& Account.Name.IndexOf("Sim", StringComparison.OrdinalIgnoreCase) < 0
+					&& Account.Name.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) < 0)
+				{
+					senderBlocked = true;
+					Log(Name + ": Signal-Sender ist AN, aber die Strategie laeuft auf dem Konto '"
+						+ Account.Name + "' (kein Sim-Konto). Sender wurde DEAKTIVIERT — bitte auf Sim101 laufen lassen.",
+						LogLevel.Error);
+				}
+				if (EnableSignalSender && string.IsNullOrWhiteSpace(SignalUrl))
+					Log(Name + ": Signal-Sender ist AN, aber keine Signal-URL gesetzt — es wird nichts gesendet.", LogLevel.Warning);
+				if (SenderActive())
+					Log(Name + ": Signal-Sender aktiv — " + SignalUrl, LogLevel.Information);
+			}
+		}
+
+		// ---------- Signal-Bridge ----------
+		// Sicherung: Der Sender arbeitet nur im Realtime-Betrieb, nur mit URL/Secret und
+		// NIE auf einem echten Konto — die Ausfuehrung gehoert auf Sim101, echte Orders
+		// macht ausschliesslich die Bridge bei Propr.
+		private bool SenderActive()
+		{
+			return EnableSignalSender
+				&& !senderBlocked
+				&& State == State.Realtime
+				&& !string.IsNullOrWhiteSpace(SignalUrl);
+		}
+
+		private static string JsonStr(string s)
+		{
+			if (s == null) return "null";
+			var sb = new StringBuilder("\"");
+			foreach (char c in s)
+			{
+				if (c == '"' || c == '\\') sb.Append('\\').Append(c);
+				else if (c < ' ') sb.Append(' ');
+				else sb.Append(c);
+			}
+			return sb.Append('"').ToString();
+		}
+
+		private static string JsonNum(double v)
+		{
+			return v.ToString("0.########", CultureInfo.InvariantCulture);
+		}
+
+		// Fire-and-forget mit 3 Wiederholungen — blockiert nie den Strategie-Thread.
+		private void SendSignal(string json)
+		{
+			string url = SignalUrl, secret = SignalSecret;
+			Task.Run(async () =>
+			{
+				for (int attempt = 1; attempt <= 3; attempt++)
+				{
+					try
+					{
+						var req = new HttpRequestMessage(HttpMethod.Post, url);
+						req.Headers.TryAddWithoutValidation("X-Signal-Secret", secret);
+						req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+						var resp = await signalHttp.SendAsync(req).ConfigureAwait(false);
+						if (resp.IsSuccessStatusCode)
+							return;
+						NinjaTrader.Code.Output.Process(Name + " Signal: HTTP " + (int)resp.StatusCode
+							+ " (Versuch " + attempt + "/3)", PrintTo.OutputTab1);
+					}
+					catch (Exception ex)
+					{
+						NinjaTrader.Code.Output.Process(Name + " Signal: " + ex.Message
+							+ " (Versuch " + attempt + "/3)", PrintTo.OutputTab1);
+					}
+					await Task.Delay(2000 * attempt).ConfigureAwait(false);
+				}
+				NinjaTrader.Code.Output.Process(Name + " Signal: endgueltig fehlgeschlagen — " + json, PrintTo.OutputTab1);
+			});
+		}
+
+		private void SendEntrySignal(bool isLong, double fillPrice, int quantity)
+		{
+			double stopPct = fillPrice > 0 ? activeRisk / fillPrice * 100.0 : 0;
+			string json = "{"
+				+ "\"event\":\"entry\""
+				+ ",\"nt_signal_id\":" + JsonStr(currentTradeId)
+				+ ",\"direction\":\"" + (isLong ? "long" : "short") + "\""
+				+ ",\"instrument\":" + JsonStr(Instrument.FullName)
+				+ ",\"entry_price\":" + JsonNum(fillPrice)
+				+ ",\"stop_price\":" + JsonNum(activeStopLevel)
+				+ ",\"stop_pct\":" + JsonNum(stopPct)
+				+ ",\"reward_multiple\":" + JsonNum(activeReward)
+				+ ",\"quantity\":" + quantity
+				+ ",\"time\":\"" + DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ") + "\""
+				+ "}";
+			SendSignal(json);
+		}
+
+		private void SendExitSignal(string reason, double fillPrice)
+		{
+			string json = "{"
+				+ "\"event\":\"exit\""
+				+ ",\"nt_signal_id\":" + JsonStr(currentTradeId)
+				+ ",\"exit_reason\":\"" + reason + "\""
+				+ ",\"exit_price\":" + JsonNum(fillPrice)
+				+ ",\"time\":\"" + DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ") + "\""
+				+ "}";
+			SendSignal(json);
+		}
+
+		private void MaybeSendHeartbeat()
+		{
+			if (!SenderActive())
+				return;
+			if ((DateTime.UtcNow - lastHeartbeatUtc).TotalMinutes < Math.Max(1, HeartbeatMinutes))
+				return;
+			lastHeartbeatUtc = DateTime.UtcNow;
+			SendSignal("{\"event\":\"heartbeat\",\"instrument\":" + JsonStr(Instrument.FullName)
+				+ ",\"time\":\"" + DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ") + "\"}");
 		}
 
 		// Vector Candle: hohes Volumen UND Koerper in Handelsrichtung.
@@ -225,6 +359,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				currentDay  = Time[0].Date;
 				tradesToday = 0;
 			}
+
+			MaybeSendHeartbeat();
 
 			// Break-Even VOR der Fensterlogik verwalten, damit er auch greift, wenn die
 			// Position (CloseAtWindowEnd = false) ueber das Fensterende hinaus laeuft.
@@ -330,6 +466,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 			activeEntryPrice = Close[0];   // vorlaeufig — OnExecutionUpdate ersetzt durch echten Fill
 			activeRisk       = dist;
 			beMoved          = false;
+			currentTradeId   = Guid.NewGuid().ToString("N");
+			entrySignalSent  = false;
 
 			if (isLong)
 			{
@@ -410,8 +548,23 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (execution.Order.OrderState != OrderState.Filled && execution.Order.OrderState != OrderState.PartFilled)
 				return;
 
-			bool isLong = execution.Order.Name == SignalLong;
-			if (!isLong && execution.Order.Name != SignalShort)
+			string orderName = execution.Order.Name;
+
+			// ---------- Exit-Fills: nur Signal senden, sonst nichts zu tun ----------
+			if (orderName == "Stop loss" || orderName == "Profit target"
+				|| orderName == "TimeExit" || orderName == "Exit on session close")
+			{
+				if (SenderActive() && currentTradeId != null)
+				{
+					string reason = orderName == "Stop loss" ? "stop"
+						: orderName == "Profit target" ? "target" : "time";
+					SendExitSignal(reason, price);
+				}
+				return;
+			}
+
+			bool isLong = orderName == SignalLong;
+			if (!isLong && orderName != SignalShort)
 				return;
 
 			double risk = isLong ? price - activeStopLevel : activeStopLevel - price;
@@ -420,6 +573,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			activeEntryPrice = price;  // Break-Even rechnet ab dem echten Fill
 			activeRisk       = risk;
+
+			// ---------- Entry-Signal (einmal pro Trade, mit echtem Fill) ----------
+			if (SenderActive() && !entrySignalSent)
+			{
+				entrySignalSent = true;
+				SendEntrySignal(isLong, price, quantity);
+			}
 
 			double target = Instrument.MasterInstrument.RoundToTickSize(
 				isLong ? price + activeReward * risk : price - activeReward * risk);
@@ -578,6 +738,23 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Debug-Log aktiv", Description = "Schreibt jeden Einstieg, jedes verworfene Signal mit Grund und jeden Zeit-Ausstieg ins NinjaScript Output-Fenster.", Order = 50, GroupName = "06 Diagnose")]
 		public bool EnableDebugLog { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Signale senden", Description = "True: sendet Entry-/Exit-Fills und einen Heartbeat per HTTPS an die Signal-Bridge (Momentum/Propr). Nur im Realtime-Betrieb, NUR auf einem Sim-Konto. Standard AUS.", Order = 60, GroupName = "07 Signal-Bridge")]
+		public bool EnableSignalSender { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Signal-URL", Description = "HTTPS-Endpunkt der Bridge (Supabase Edge Function).", Order = 61, GroupName = "07 Signal-Bridge")]
+		public string SignalUrl { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Signal-Secret", Description = "Gemeinsames Geheimnis; wird als Header X-Signal-Secret mitgesendet. Kommt aus dem Momentum-Dashboard.", Order = 62, GroupName = "07 Signal-Bridge")]
+		public string SignalSecret { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(1, 60)]
+		[Display(Name = "Heartbeat (Minuten)", Description = "Wie oft ein Lebenszeichen an die Bridge geht. Standard 5.", Order = 63, GroupName = "07 Signal-Bridge")]
+		public int HeartbeatMinutes { get; set; }
 		#endregion
 	}
 }

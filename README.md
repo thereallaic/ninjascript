@@ -559,6 +559,15 @@ Wichtig:
 - Die Strategie läuft `OnBarClose`: Der Trigger gilt als erreicht, wenn High/Low der abgeschlossenen Kerze ihn berührt hat. Ob der Kurs innerhalb derselben Kerze erst den Trigger und dann den alten Stop anlief, ist auf Kerzenbasis nicht feststellbar — **der Backtest ist bei diesem Feature also eher optimistisch.** Zur Einordnung: Die MFE-Analyse der bisherigen Läufe zeigte, dass nur wenige Verlierer überhaupt 3R MFE erreichen; erwarte vom Break-Even eher einen kleinen Effekt.
 - Der Stop wird nie verschlechtert und bleibt immer mindestens 1 Tick vom aktuellen Schlusskurs entfernt.
 
+### Signal-Bridge (Gruppe „07 Signal-Bridge")
+
+Für den Live-Signalbetrieb (Momentum/Propr-Auto-Trading): `EnableSignalSender` (Standard **aus**) sendet bei jedem **Entry-Fill** (mit Fill-Kurs, Stop, Stopdistanz in %, R-Ziel), jedem **Exit-Fill** (Grund: stop/target/time) und alle `HeartbeatMinutes` ein Lebenszeichen per HTTPS-POST an `SignalUrl`, authentifiziert über den Header `X-Signal-Secret`.
+
+Sicherungen:
+- Sendet **nur im Realtime-Betrieb** — Backtests und historische Fills senden nie.
+- **Nur auf Sim-Konten**: Läuft die Strategie versehentlich auf einem echten Konto, wird der Sender hart deaktiviert (Error-Log). Die Ausführung gehört auf Sim101; echte Orders macht ausschließlich die Bridge bei Propr.
+- Versand ist fire-and-forget mit 3 Wiederholungen — der Strategie-Thread blockiert nie; endgültige Fehlschläge landen im Output-Fenster.
+
 ### Separates R-Ziel für Mittwoch/Donnerstag
 
 `UseMidweekReward = true` lässt Mi/Do mit `MidweekRewardMultiple` (Standard 2) statt des normalen R-Ziels handeln — gedacht als Experiment, um die schwachen Mitte-der-Woche-Tage zu retten.
