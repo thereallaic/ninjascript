@@ -13,6 +13,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/VolumeSpikeEma50.cs` | VolumeSpikeEma50 | Eigenständiger Ansatz: Long **und** Short 12:00–22:00 (Mo–Do), Volumenausbruch (2×) mit EMA50-Richtungsfilter, Stop auf dem Candle-Open, frei einstellbares R-Ziel |
 | `Strategies/PrevDayRangeBreakout.cs` | PrevDayRangeBreakout | Vector Candle über dem Vortageshoch / unter dem Vortagestief, 15:30–17:00, Stop am Open der Signalkerze, 3R-Ziel |
 | `PineScript/PrevDayRangeBreakout.pine` | PDR Signale (TradingView) | Pine-v6-Indikator: gleiche Einstiegsbedingungen als Chart-Signale inkl. Vector-Candle-Färbung |
+| `Strategies/EmaBandReversion.cs` | EmaBandReversion | Rückkehr in die EMA50-Fläche (EMA ± 2 StdAbw, 1-min), Stop = 1 ATR, R-Leiter-Trailing ab +1R |
 | `Strategies/TimedLong.cs` | TimedLong | **Benchmark ohne Signal:** täglich um 16:00 long, Ausstieg 22:00. Messlatte für alle übrigen Strategien |
 
 ---
@@ -573,6 +574,38 @@ Sicherungen:
 `UseMidweekReward = true` lässt Mi/Do mit `MidweekRewardMultiple` (Standard 2) statt des normalen R-Ziels handeln — gedacht als Experiment, um die schwachen Mitte-der-Woche-Tage zu retten.
 
 **Standard ist AUS, und zwar mit Grund:** Die MFE-Rekonstruktion über den Backtest 2020–2026 (MNQ, 5-min) zeigt, dass ein niedrigeres Ziel Mi/Do *schlechter* macht, nicht besser (2R ≈ −7.500 $ vs. 3R ≈ −5.600 $ auf Mi/Do). Die Mi/Do-Verlierer laufen kaum je ins Plus (nur 5 % erreichen 2R MFE), ein kleineres Ziel kostet also vor allem die vollen 3R-Gewinner. Sind Mittwoch und Donnerstag ohnehin abgeschaltet, ist der Schalter wirkungslos — die Strategie loggt dann eine Warnung.
+
+---
+
+## EmaBandReversion — Rückkehr in die EMA50-Fläche (1-min)
+
+**Die Fläche:** `EMA(50) ± Faktor × Standardabweichung` (Standard: Faktor 2, StdAbw über 50 Kerzen). Oberkante und Unterkante bilden die „EMA50-Fläche".
+
+**Einstieg (Long; Short spiegelbildlich):**
+1. Der Kurs muss zuerst **oberhalb** der Fläche schließen — das schaltet die Long-Seite scharf.
+2. Kommt danach eine Kerze **in die Fläche** (Standard: Berührung mit dem Docht genügt; per Schalter `EntryRequiresCloseInside`: Schluss in der Fläche nötig), wird zur Eröffnung der Folgekerze eingestiegen.
+3. Schließt die Signalkerze komplett **unter** der Fläche, ist es ein Durchbruch — kein Trade.
+4. Nach einem Trade ist die Seite erst wieder scharf, wenn der Kurs erneut oberhalb der Fläche geschlossen hat (kein Wiedereinstiegs-Dauerfeuer).
+
+**Risiko & R-Leiter-Trailing:**
+- **1R = ATR** (Periode 14) zum Signalzeitpunkt; Positionsgröße aus festem Geldrisiko (100/Trade).
+- Start: Stop = Einstieg − 1R, Ziel = Einstieg + 2R (`InitialTargetR`).
+- Schließt eine Kerze über Einstieg + 1R → Stop auf Einstieg, Ziel auf +3R. Bei +2R → Stop +1R, Ziel +4R usw. Eine große Kerze kann mehrere Stufen auf einmal schalten. Der Trade endet, wenn Stop oder Ziel getroffen wird, bevor die nächste Stufe erreicht ist.
+- Läuft bewusst `OnBarClose` (Stufen nur am Kerzenschluss); Stop/Ziel liegen als echte Orders im Markt und füllen intrabar. Die Tick-Variante (`OnEachTick`) für den Livebetrieb wird nachgerüstet, sobald das Regelwerk validiert ist.
+
+**Filter — alle standardmäßig AUS** (zum schrittweisen Zuschalten beim Testen): Zeitfenster, Max. Trades pro Tag (0 = unbegrenzt), **Vortagesrange-Filter** (`RequirePdRange`: Long nur über dem Vortageshoch, Short nur unter dem Vortagestief; nutzt die Tagesserie). Weitere Einstiegs-Indikatoren kommen nach und nach in `EntryFiltersOk()` dazu — jeweils mit eigenem Schalter, Standard AUS.
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `BandEmaPeriod` / `BandStdDevPeriod` / `BandStdDevMultiple` | 50 / 50 / 2 | Definition der Fläche |
+| `EntryRequiresCloseInside` | false | Berührung genügt (Standard) vs. Schluss in der Fläche |
+| `AtrPeriod` | 14 | 1R = ATR bei Signal |
+| `InitialTargetR` | 2 | Startziel in R |
+| `UseTrailing` | **true** | R-Leiter an/aus (aus = festes Bracket 1R/Ziel) |
+| `RequirePdRange` | false | PDH/PDL-Filter |
+| `UseTimeWindow` / `MaxTradesPerDay` | false / 0 | Standard: ganztägig, unbegrenzt |
+| `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße |
+| `MinStopTicks` / `MaxStopTicks` | 1 / 10000 | ATR-Wächter, praktisch aus |
 
 ---
 
