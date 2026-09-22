@@ -599,6 +599,8 @@ Sicherungen:
 |---|---|---|
 | `BandEmaPeriod` / `BandStdDevPeriod` / `BandStdDevMultiple` | 50 / 50 / 2 | Definition der Fläche |
 | `EntryRequiresCloseInside` | false | Berührung genügt (Standard) vs. Schluss in der Fläche |
+| `UseColorFilter` | false | Grüne Signalkerze → nur Long, rote → nur Short |
+| `UseOpenInsideBand` | false | Signalkerze muss innerhalb der Fläche eröffnet haben |
 | `AtrPeriod` | 14 | 1R = ATR bei Signal |
 | `InitialTargetR` | 2 | Startziel in R |
 | `UseTrailing` | **true** | R-Leiter an/aus (aus = festes Bracket 1R/Ziel) |

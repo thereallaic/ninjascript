@@ -126,6 +126,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				BandStdDevPeriod     = 50;
 				BandStdDevMultiple   = 2.0;
 				EntryRequiresCloseInside = false; // Standard: Beruehrung (Docht) genuegt
+				UseColorFilter       = false;     // gruene Signalkerze nur Long, rote nur Short
+				UseOpenInsideBand    = false;     // Open der Signalkerze muss IN der Flaeche liegen
 				AllowLong            = true;
 				AllowShort           = true;
 				RequirePdRange       = false;     // Long nur > PDH, Short nur < PDL — AUS
@@ -173,10 +175,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 		}
 
-		// Platzhalter fuer kuenftige Einstiegs-Indikatoren: Hier kommen nach und nach
-		// weitere Filter dazu (jeweils mit eigenem Schalter, Standard AUS).
-		private bool EntryFiltersOk(bool isLong)
+		// Einstiegs-Filter (alle optional, Standard AUS). Hier kommen nach und nach
+		// weitere Indikatoren dazu — jeweils mit eigenem Schalter.
+		private bool EntryFiltersOk(bool isLong, double upper, double lower)
 		{
+			// Kerzenfarbe: Die Signalkerze muss in Handelsrichtung schliessen —
+			// gruen fuer Long, rot fuer Short (Rejection der Flaeche statt freier Fall hinein).
+			if (UseColorFilter)
+			{
+				bool colorOk = isLong ? Close[0] > Open[0] : Close[0] < Open[0];
+				if (!colorOk)
+					return false;
+			}
+
+			// Open in der Flaeche: Die Signalkerze muss bereits IN der Flaeche EROEFFNET
+			// haben — filtert Kerzen weg, die erst mit einem grossen Impuls hineinstuerzen.
+			if (UseOpenInsideBand)
+			{
+				if (Open[0] > upper || Open[0] < lower)
+					return false;
+			}
+
 			return true;
 		}
 
@@ -273,7 +292,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				// Long: Seite war scharf (Schluss ueber der Flaeche) und die Kerze kommt
 				// von oben in die Flaeche — ohne komplett darunter zu schliessen.
-				if (AllowLong && longArmed && pdLongOk && EntryFiltersOk(true))
+				if (AllowLong && longArmed && pdLongOk && EntryFiltersOk(true, upper, lower))
 				{
 					bool touched = EntryRequiresCloseInside
 						? (Close[0] <= upper && Close[0] >= lower)
@@ -287,7 +306,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 
 				// Short: spiegelbildlich von unten in die Flaeche.
-				if (AllowShort && shortArmed && pdShortOk && EntryFiltersOk(false))
+				if (AllowShort && shortArmed && pdShortOk && EntryFiltersOk(false, upper, lower))
 				{
 					bool touched = EntryRequiresCloseInside
 						? (Close[0] >= lower && Close[0] <= upper)
@@ -539,6 +558,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Schluss in der Flaeche noetig", Description = "AUS (Standard): Beruehrung der Flaeche mit dem Docht genuegt als Signal. AN: die Kerze muss IN der Flaeche schliessen.", Order = 23, GroupName = "03 Einstieg")]
 		public bool EntryRequiresCloseInside { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Kerzenfarben-Filter", Description = "AN: Nur Longs, wenn die Signalkerze gruen schliesst; nur Shorts bei roter Signalkerze. Standard AUS.", Order = 27, GroupName = "03 Einstieg")]
+		public bool UseColorFilter { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Open in der Flaeche noetig", Description = "AN: Die Signalkerze muss bereits INNERHALB der Flaeche eroeffnet haben. Standard AUS.", Order = 28, GroupName = "03 Einstieg")]
+		public bool UseOpenInsideBand { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Long erlauben",  Order = 24, GroupName = "03 Einstieg")]
