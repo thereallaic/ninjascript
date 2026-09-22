@@ -119,6 +119,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TradeWednesday       = true;
 				TradeThursday        = true;
 				TradeFriday          = true;
+				TradeSaturday        = true;  // fuer Krypto (24/7 bzw. CME-Sonntagssession);
+				TradeSunday          = true;  // bei Index-Futures gibt es dort ohnehin keine Bars
 				// 03 Einstieg
 				BandEmaPeriod        = 50;
 				BandStdDevPeriod     = 50;
@@ -200,6 +202,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				case DayOfWeek.Wednesday: return TradeWednesday;
 				case DayOfWeek.Thursday:  return TradeThursday;
 				case DayOfWeek.Friday:    return TradeFriday;
+				case DayOfWeek.Saturday:  return TradeSaturday;
+				case DayOfWeek.Sunday:    return TradeSunday;
 				default:                  return false;
 			}
 		}
@@ -508,6 +512,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Freitag handeln",   Order = 14, GroupName = "02 Wochentage")]
 		public bool TradeFriday { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Samstag handeln", Description = "Nur fuer 24/7-Maerkte (Krypto-Spot/Perp) relevant.", Order = 15, GroupName = "02 Wochentage")]
+		public bool TradeSaturday { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Sonntag handeln", Description = "Krypto und CME-Sonntagssession. Bei Instrumenten ohne Sonntags-Bars wirkungslos.", Order = 16, GroupName = "02 Wochentage")]
+		public bool TradeSunday { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(2, 500)]
