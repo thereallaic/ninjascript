@@ -11,6 +11,9 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/OpeningPullbackSwing1R.cs` | OpeningPullbackSwing1R | Wie Variante 1, aber Stop unter dem geformten Swing-Low / über dem Swing-High (Wick statt Close) und Ziel = 1R |
 | `Strategies/OpeningPullbackSwingReverse1R.cs` | OpeningPullbackSwingReverse1R | Umkehrung von Variante 3: gleiches Signal, gleicher Zeitpunkt, **gedrehte Orderrichtung** |
 | `Strategies/VolumeSpikeEma50.cs` | VolumeSpikeEma50 | Eigenständiger Ansatz: Long **und** Short 12:00–22:00 (Mo–Do), Volumenausbruch (2×) mit EMA50-Richtungsfilter, Stop auf dem Candle-Open, frei einstellbares R-Ziel |
+| `Strategies/PrevDayRangeBreakout.cs` | PrevDayRangeBreakout | Vector Candle über dem Vortageshoch / unter dem Vortagestief, 15:30–17:00, Stop am Open der Signalkerze, 3R-Ziel |
+| `PineScript/PrevDayRangeBreakout.pine` | PDR Signale (TradingView) | Pine-v6-Indikator: gleiche Einstiegsbedingungen als Chart-Signale inkl. Vector-Candle-Färbung |
+| `Strategies/EmaBandReversion.cs` | EmaBandReversion | Rückkehr in die EMA50-Fläche (EMA ± 2 StdAbw, 1-min), Stop = 1 ATR, R-Leiter-Trailing ab +1R |
 | `Strategies/TimedLong.cs` | TimedLong | **Benchmark ohne Signal:** täglich um 16:00 long, Ausstieg 22:00. Messlatte für alle übrigen Strategien |
 
 ---
@@ -493,6 +496,132 @@ Der Vorteil gegenüber einem Volatilitätsfilter: Es fallen **keine Trades weg**
 1. TimedLong über **denselben Zeitraum, dasselbe Instrument, dieselben Kosten** laufen lassen wie die anderen Strategien.
 2. Vergleichsgrößen: **Erwartung pro Trade**, Profit Factor, Max Drawdown — nicht Net Profit (unterschiedliche Positionsgrößen).
 3. Die Einstiegszeit ist ein Parameter: Ein Sweep über `EntryHour` zeigt dir, ob es am FDXS überhaupt Tageszeiten mit systematischer Drift gibt. Das ist als Diagnose nützlich — aber die beste Stunde aus so einem Sweep zu übernehmen wäre wieder Optimierung auf die Testdaten.
+
+---
+
+## PrevDayRangeBreakout — Vortagesrange-Ausbruch
+
+**Long nur oberhalb des Vortageshochs (PDH), Short nur unterhalb des Vortagestiefs (PDL).** Bewusst einfach gehalten — es gibt genau einen Auslöser und keine Zusatzmodi.
+
+1. **Handelsfenster:** Einstiege nur 15:30–17:00 (US-Kassaeröffnung). Position wird am Fensterende glattgestellt (`CloseAtWindowEnd`).
+2. **Referenzlevel:** Hoch und Tief der letzten **abgeschlossenen** Tageskerze (`Highs[1][0]` / `Lows[1][0]`). NinjaTrader liefert von Zusatzserien nur fertige Bars — der heutige Tag fließt nicht ein, kein Look-ahead.
+3. **Auslöser:** eine **Vector Candle**, die jenseits des Levels schließt (Long: `Close > PDH`, Short: `Close < PDL`).
+4. **Stop** auf dem **Open der Signalkerze**, **Ziel** = `RewardMultiple` × Stopdistanz (Standard 3R).
+5. Max. 1 Trade pro Tag, alle Wochentage einzeln abschaltbar.
+
+### Der Auslöser: Vector Candle
+
+Über dem Level allein wird nicht eingestiegen — die Signalkerze muss eine **Vector Candle** sein:
+
+```
+Volumen ≥ 2,0 × Durchschnitt der 20 VORHERGEHENDEN Kerzen
+UND  Long: Close > Open (grün)   ·   Short: Close < Open (rot)
+```
+
+Der Durchschnitt wird über `volAvg[1]` gelesen — die Signalkerze zählt **nicht** in ihre eigene Messlatte. Sonst würde eine Volumenspitze den Schwellwert selbst anheben und das Signal umso schwächer, je stärker der Ausbruch ist.
+
+### Stop am Open der Signalkerze
+
+Der Stop sitzt auf dem **Open der Vector Candle**. Weil die Kerze bei Long grün und bei Short rot sein muss, liegt das Open automatisch auf der richtigen Seite des Einstiegs. Die Distanz entspricht damit dem Kerzenkörper (plus dem Sprung zum Fill der Folgekerze); das Ziel wird nach dem Fill auf den echten Einstiegskurs nachgerechnet, damit das R-Verhältnis auch nach Slippage stimmt.
+
+Zwei Wächter verwerfen unbrauchbare Signale und loggen den Grund:
+
+| Fall | Wächter | Warum |
+|---|---|---|
+| Winziger Kerzenkörper | `MinStopTicks` (8) | Stop im Rauschen, Positionsgröße schießt hoch |
+| Riesige Signalkerze | `MaxStopTicks` (120) | R-Ziel läge unrealistisch weit weg |
+
+### Parameter
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `StartHour`/`Minute`, `EndHour`/`Minute` | 15:30 / 17:00 | Handelsfenster |
+| `CloseAtWindowEnd` | true | Position am Fensterende schließen |
+| `TradeMonday` … `TradeFriday` | alle true | Einzeln abschaltbar |
+| `VectorVolumeMultiple` | **2.0** | 200 % des Durchschnittsvolumens |
+| `VectorVolumeLookback` | **20** | Durchschnitt über so viele **vorhergehende** Kerzen |
+| `AllowLong` / `AllowShort` | true / true | Richtungen einzeln testbar |
+| `MinStopTicks` / `MaxStopTicks` | 8 / 120 | Distanz-Wächter |
+| `RewardMultipleLong` / `RewardMultipleShort` | **3** / **3** | R-Ziel getrennt für Long und Short |
+| `UseMidweekReward` | **false** | Mi/Do bekommen ein eigenes R-Ziel (s. u.) |
+| `MidweekRewardMultiple` | 2 | R-Ziel nur für Mi/Do, wenn der Schalter an ist |
+| `UseBreakEvenLong` / `UseBreakEvenShort` | **true** / **false** | Stop einmalig auf Einstand ziehen (s. u.) |
+| `BreakEvenTriggerR` / `BreakEvenOffsetR` | 3 / 0 | Trigger und Ziel-Level des Break-Even in R |
+| `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße |
+| `MaxTradesPerDay` | 1 | 0 = unbegrenzt |
+| `EnableDebugLog` | false | Loggt Einstiege und **verworfene Signale mit Grund** |
+
+### Break-Even-Stop (getrennt für Long und Short)
+
+Erreicht der Kurs `BreakEvenTriggerR` (Standard 3R, gerechnet ab dem echten Fill), wird der Stop **einmalig** auf Einstand + `BreakEvenOffsetR` gezogen (Offset 0 = exakt 0R). `UseBreakEvenLong` ist standardmäßig **an**, `UseBreakEvenShort` **aus** — gedacht für den Test „Ziel 4R, aber ab 3R nichts mehr zurückgeben".
+
+Wichtig:
+- Der Trigger muss **unter** dem R-Ziel der Richtung liegen (z. B. Trigger 3 bei `RewardMultipleLong = 4`), sonst füllt das Ziel immer zuerst und der Break-Even wirkt nie — die Strategie warnt beim Start.
+- Die Strategie läuft `OnBarClose`: Der Trigger gilt als erreicht, wenn High/Low der abgeschlossenen Kerze ihn berührt hat. Ob der Kurs innerhalb derselben Kerze erst den Trigger und dann den alten Stop anlief, ist auf Kerzenbasis nicht feststellbar — **der Backtest ist bei diesem Feature also eher optimistisch.** Zur Einordnung: Die MFE-Analyse der bisherigen Läufe zeigte, dass nur wenige Verlierer überhaupt 3R MFE erreichen; erwarte vom Break-Even eher einen kleinen Effekt.
+- Der Stop wird nie verschlechtert und bleibt immer mindestens 1 Tick vom aktuellen Schlusskurs entfernt.
+
+### Signal-Bridge (Gruppe „07 Signal-Bridge")
+
+Für den Live-Signalbetrieb (Momentum/Propr-Auto-Trading): `EnableSignalSender` (Standard **aus**) sendet bei jedem **Entry-Fill** (mit Fill-Kurs, Stop, Stopdistanz in %, R-Ziel), jedem **Exit-Fill** (Grund: stop/target/time) und alle `HeartbeatMinutes` ein Lebenszeichen per HTTPS-POST an `SignalUrl`, authentifiziert über den Header `X-Signal-Secret`.
+
+Sicherungen:
+- Sendet **nur im Realtime-Betrieb** — Backtests und historische Fills senden nie.
+- **Nur auf Sim-Konten**: Läuft die Strategie versehentlich auf einem echten Konto, wird der Sender hart deaktiviert (Error-Log). Die Ausführung gehört auf Sim101; echte Orders macht ausschließlich die Bridge bei Propr.
+- Versand ist fire-and-forget mit 3 Wiederholungen — der Strategie-Thread blockiert nie; endgültige Fehlschläge landen im Output-Fenster.
+
+### Separates R-Ziel für Mittwoch/Donnerstag
+
+`UseMidweekReward = true` lässt Mi/Do mit `MidweekRewardMultiple` (Standard 2) statt des normalen R-Ziels handeln — gedacht als Experiment, um die schwachen Mitte-der-Woche-Tage zu retten.
+
+**Standard ist AUS, und zwar mit Grund:** Die MFE-Rekonstruktion über den Backtest 2020–2026 (MNQ, 5-min) zeigt, dass ein niedrigeres Ziel Mi/Do *schlechter* macht, nicht besser (2R ≈ −7.500 $ vs. 3R ≈ −5.600 $ auf Mi/Do). Die Mi/Do-Verlierer laufen kaum je ins Plus (nur 5 % erreichen 2R MFE), ein kleineres Ziel kostet also vor allem die vollen 3R-Gewinner. Sind Mittwoch und Donnerstag ohnehin abgeschaltet, ist der Schalter wirkungslos — die Strategie loggt dann eine Warnung.
+
+---
+
+## EmaBandReversion — Rückkehr in die EMA50-Fläche (1-min)
+
+**Die Fläche:** `EMA(50) ± Faktor × Standardabweichung` (Standard: Faktor 2, StdAbw über 50 Kerzen). Oberkante und Unterkante bilden die „EMA50-Fläche".
+
+**Einstieg (Long; Short spiegelbildlich):**
+1. Der Kurs muss zuerst **oberhalb** der Fläche schließen — das schaltet die Long-Seite scharf.
+2. Kommt danach eine Kerze **in die Fläche** (Standard: Berührung mit dem Docht genügt; per Schalter `EntryRequiresCloseInside`: Schluss in der Fläche nötig), wird zur Eröffnung der Folgekerze eingestiegen.
+3. Schließt die Signalkerze komplett **unter** der Fläche, ist es ein Durchbruch — kein Trade.
+4. Nach einem Trade ist die Seite erst wieder scharf, wenn der Kurs erneut oberhalb der Fläche geschlossen hat (kein Wiedereinstiegs-Dauerfeuer).
+
+**Risiko & R-Leiter-Trailing:**
+- **1R = ATR** (Periode 14) zum Signalzeitpunkt; Positionsgröße aus festem Geldrisiko (100/Trade).
+- Start: Stop = Einstieg − 1R, Ziel = Einstieg + 2R (`InitialTargetR`).
+- Schließt eine Kerze über Einstieg + 1R → Stop auf Einstieg, Ziel auf +3R. Bei +2R → Stop +1R, Ziel +4R usw. Eine große Kerze kann mehrere Stufen auf einmal schalten. Der Trade endet, wenn Stop oder Ziel getroffen wird, bevor die nächste Stufe erreicht ist.
+- Läuft bewusst `OnBarClose` (Stufen nur am Kerzenschluss); Stop/Ziel liegen als echte Orders im Markt und füllen intrabar. Die Tick-Variante (`OnEachTick`) für den Livebetrieb wird nachgerüstet, sobald das Regelwerk validiert ist.
+
+**Filter — alle standardmäßig AUS** (zum schrittweisen Zuschalten beim Testen): Zeitfenster, Max. Trades pro Tag (0 = unbegrenzt), **Vortagesrange-Filter** (`RequirePdRange`: Long nur über dem Vortageshoch, Short nur unter dem Vortagestief; nutzt die Tagesserie). Weitere Einstiegs-Indikatoren kommen nach und nach in `EntryFiltersOk()` dazu — jeweils mit eigenem Schalter, Standard AUS.
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `BandEmaPeriod` / `BandStdDevPeriod` / `BandStdDevMultiple` | 50 / 50 / 2 | Definition der Fläche |
+| `EntryRequiresCloseInside` | false | Berührung genügt (Standard) vs. Schluss in der Fläche |
+| `AtrPeriod` | 14 | 1R = ATR bei Signal |
+| `InitialTargetR` | 2 | Startziel in R |
+| `UseTrailing` | **true** | R-Leiter an/aus (aus = festes Bracket 1R/Ziel) |
+| `RequirePdRange` | false | PDH/PDL-Filter |
+| `UseTimeWindow` / `MaxTradesPerDay` | false / 0 | Standard: ganztägig, unbegrenzt |
+| `UseFixedRisk` / `RiskAmount` / `MaxContracts` | true / 100 / 50 | Positionsgröße |
+| `MinStopTicks` / `MaxStopTicks` | 1 / 10000 | ATR-Wächter, praktisch aus |
+
+---
+
+## PineScript: PrevDayRangeBreakout für TradingView
+
+`PineScript/PrevDayRangeBreakout.pine` ist die Signal-Portierung der Strategie für TradingView (Pine v6, **Indikator** — zeigt Einstiege an, handelt nicht). Regelwerk identisch zur NT-Strategie: Fenster 15:30–17:00 (Zeitzone einstellbar, Standard Europe/Berlin), Vector Candle (Volumen ≥ Faktor × Durchschnitt der vorherigen N Kerzen, grün/rot in Richtung) schließt über PDH / unter PDL, Stop-Wächter in Ticks, max. Signale pro Tag.
+
+- **Entry-Marker**: Dreieck + „Long"/„Short" an der Signalkerze, optional Stop- (Open der Signalkerze) und R-Ziel-Linien.
+- **Kerzenfärbung**: `barcolor()` färbt die Körper der echten Chart-Kerzen direkt um — Vector Candles grün/rot (Farben einstellbar), alle übrigen hellgrau (aufwärts) / dunkelgrau (abwärts). Docht und Rand kann ein TradingView-Indikator nicht setzen; sie kommen aus den Chart-Einstellungen (Symbol → Kerzen) und stehen dort standardmäßig bereits auf grün/rot.
+- **Handelsfenster-Hintergrund**: Kerzen, in denen ein Einstieg möglich wäre (Fenster + aktivierter Wochentag), werden dezent blau hinterlegt (Farbe/Schalter einstellbar).
+- **PDH/PDL** werden aus der abgeschlossenen Tageskerze gelesen (`high[1]`/`low[1]` mit `lookahead_on`) — kein Repaint.
+- **Alerts**: `PDR Long` / `PDR Short` sind als `alertcondition` hinterlegt; bei der Alert-Einrichtung „Einmal pro Kerzenschluss" wählen.
+
+**Einrichtung**: Pine Editor → Code einfügen → „Zum Chart hinzufügen" — die Kerzenfärbung greift sofort, nichts muss ausgeblendet werden. Chart auf 5 Minuten stellen, wenn es dem NT-Backtest entsprechen soll.
+
+Kleine Abweichung zur NT-Strategie: NinjaTrader steigt zur Eröffnung der Folgekerze ein und es gibt dort kein Signal, solange eine Position offen ist. Der Indikator kennt keine Positionen — er begrenzt stattdessen über „Max. Signale pro Tag" (Standard 1), was bei 1 Trade/Tag auf dasselbe hinausläuft.
 
 ---
 

@@ -1,0 +1,162 @@
+//@version=6
+// =====================================================================================
+// PrevDayRangeBreakout — Signal-Indikator fuer TradingView
+//
+// Portierung der NinjaTrader-Strategie PrevDayRangeBreakout (Signal-Anzeige, kein
+// automatischer Handel). Regelwerk identisch:
+//
+//  1. Handelsfenster: Signale nur, wenn die Kerze zwischen Start und Ende SCHLIESST
+//     (Standard 15:30-17:00, Zeitzone einstellbar, Standard Europe/Berlin).
+//  2. Referenzlevel: Hoch/Tief des VORTAGES aus der Tagesserie (abgeschlossene
+//     Tageskerze, kein Repaint: high[1]/low[1] mit lookahead_on).
+//  3. Long, wenn eine VECTOR CANDLE ueber dem Vortageshoch schliesst;
+//     Short, wenn sie unter dem Vortagestief schliesst.
+//     Vector Candle = Volumen >= Faktor x Durchschnitt der N VORHERGEHENDEN Kerzen
+//     (die Signalkerze zaehlt nicht in ihre eigene Messlatte) UND gruen (Long) / rot (Short).
+//  4. Stop laege auf dem OPEN der Signalkerze, Ziel = R-Multiple x Distanz (fuer Long
+//     und Short getrennt, optional eigenes R fuer Mi/Do — wie in der NT-Strategie).
+//     Beides wird optional als Linien eingezeichnet.
+//  5. Mindest-/Maximal-Stopdistanz (Ticks) verwerfen Signale wie in der Strategie.
+//  6. Max. Signale pro Tag begrenzbar (Standard 1), Wochentage einzeln abschaltbar.
+//
+// Kerzenfaerbung: barcolor() faerbt die KOERPER der echten Chart-Kerzen direkt um —
+// Vector Candles gruen/rot (einstellbar), alle uebrigen hellgrau (aufwaerts) /
+// dunkelgrau (abwaerts). Kein Ausblenden der Original-Kerzen noetig.
+// Docht und Rand kann ein Indikator in TradingView NICHT setzen — die kommen aus den
+// Chart-Einstellungen (Symbol -> Kerzen -> Docht/Rand) und stehen dort standardmaessig
+// bereits auf gruen/rot. Dort ggf. einmalig pruefen.
+// =====================================================================================
+indicator("PrevDayRangeBreakout Signale", shorttitle = "PDR Signale", overlay = true,
+     max_lines_count = 500, max_labels_count = 500)
+
+// ---------- 01 Zeiten ----------
+g1        = "01 Zeiten"
+tz        = input.string("Europe/Berlin", "Zeitzone",                          group = g1)
+startHour = input.int(15, "Start – Stunde",  minval = 0, maxval = 23,          group = g1)
+startMin  = input.int(30, "Start – Minute",  minval = 0, maxval = 59,          group = g1)
+endHour   = input.int(17, "Ende – Stunde",   minval = 0, maxval = 23,          group = g1)
+endMin    = input.int(0,  "Ende – Minute",   minval = 0, maxval = 59,          group = g1)
+
+// ---------- 02 Wochentage ----------
+g2       = "02 Wochentage"
+tradeMon = input.bool(true, "Montag handeln",     group = g2)
+tradeTue = input.bool(true, "Dienstag handeln",   group = g2)
+tradeWed = input.bool(true, "Mittwoch handeln",   group = g2)
+tradeThu = input.bool(true, "Donnerstag handeln", group = g2)
+tradeFri = input.bool(true, "Freitag handeln",    group = g2)
+
+// ---------- 03 Einstieg ----------
+g3         = "03 Einstieg"
+vecMult    = input.float(2.0, "Vector: Volumen-Faktor",    minval = 1.0, step = 0.1,
+     tooltip = "Vielfaches des Durchschnittsvolumens. 2,0 = 200 %.",            group = g3)
+vecLen     = input.int(20,   "Vector: Durchschnitt ueber", minval = 2,
+     tooltip = "Volumendurchschnitt ueber so viele VORHERGEHENDE Kerzen — die Signalkerze zaehlt nicht mit.", group = g3)
+allowLong  = input.bool(true, "Long erlauben",  group = g3)
+allowShort = input.bool(true, "Short erlauben", group = g3)
+
+// ---------- 04 Risiko / Anzeige ----------
+g4           = "04 Risiko / Anzeige"
+minStopTicks = input.int(8,   "Mindest-Stopdistanz (Ticks)", minval = 0,        group = g4)
+maxStopTicks = input.int(120, "Maximale Stopdistanz (Ticks)", minval = 1,       group = g4)
+rewardLong   = input.float(3.0, "R-Ziel Long",  minval = 0.25, step = 0.25,     group = g4)
+rewardShort  = input.float(3.0, "R-Ziel Short", minval = 0.25, step = 0.25,     group = g4)
+useMidweekR  = input.bool(false, "R-Ziel Mi/Do separat",
+     tooltip = "Mittwoch und Donnerstag nutzen das eigene R-Ziel unten statt des Long/Short-R. Standard AUS — die Datenanalyse spricht dagegen (s. README).", group = g4)
+midweekR     = input.float(2.0, "R-Ziel Mi/Do", minval = 0.25, step = 0.25,     group = g4)
+maxPerDay    = input.int(1, "Max. Signale pro Tag (0 = unbegrenzt)", minval = 0, group = g4)
+showLevels   = input.bool(true, "Stop/Ziel-Linien zeichnen",                    group = g4)
+showPdLines  = input.bool(true, "PDH/PDL-Linien anzeigen",                      group = g4)
+showWindow   = input.bool(true, "Handelsfenster einfaerben",
+     tooltip = "Faerbt den Hintergrund der Kerzen, in denen ein Einstieg moeglich waere (Fenster + aktivierter Wochentag).", group = g4)
+
+// ---------- 05 Farben ----------
+g5           = "05 Farben"
+colVecUp     = input.color(color.new(#26a69a, 0),  "Vector Candle gruen",       group = g5)
+colVecDown   = input.color(color.new(#ef5350, 0),  "Vector Candle rot",         group = g5)
+colBodyUp    = input.color(color.new(#d1d4dc, 0),  "Standard-Koerper hellgrau", group = g5)
+colBodyDown  = input.color(color.new(#4a4e59, 0),  "Standard-Koerper dunkelgrau", group = g5)
+colEdgeUp    = input.color(color.new(#26a69a, 0),  "Signal-Farbe gruen (Marker/Linien)", group = g5)
+colEdgeDown  = input.color(color.new(#ef5350, 0),  "Signal-Farbe rot (Marker/Linien)",   group = g5)
+colWindow    = input.color(color.new(#2962ff, 88), "Hintergrund Handelsfenster",         group = g5)
+
+// ---------- Vortageslevel (kein Repaint: abgeschlossene Tageskerze) ----------
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1],  lookahead = barmerge.lookahead_on)
+
+// ---------- Fenster & Wochentag (auf Basis der SCHLUSSZEIT der Kerze, wie in NT) ----------
+closeMinutes = hour(time_close, tz) * 60 + minute(time_close, tz)
+winStart     = startHour * 60 + startMin
+winEnd       = endHour   * 60 + endMin
+inWindow     = closeMinutes > winStart and closeMinutes < winEnd
+
+wd    = dayofweek(time_close, tz)
+dayOk = (wd == dayofweek.monday and tradeMon) or (wd == dayofweek.tuesday and tradeTue) or
+     (wd == dayofweek.wednesday and tradeWed) or (wd == dayofweek.thursday and tradeThu) or
+     (wd == dayofweek.friday and tradeFri)
+
+// ---------- Vector Candle ----------
+volAvg  = ta.sma(volume, vecLen)
+avgPrev = volAvg[1]                       // Durchschnitt der VORHERGEHENDEN Kerzen
+isGreen = close > open
+isRed   = close < open
+volOk   = not na(avgPrev) and avgPrev > 0 and volume >= vecMult * avgPrev
+vecUp   = volOk and isGreen
+vecDown = volOk and isRed
+
+// ---------- Stop-Waechter (Stop = Open der Signalkerze) ----------
+distLong  = close - open
+distShort = open - close
+guardLong  = distLong  >= minStopTicks * syminfo.mintick and distLong  <= maxStopTicks * syminfo.mintick
+guardShort = distShort >= minStopTicks * syminfo.mintick and distShort <= maxStopTicks * syminfo.mintick
+
+// ---------- Signalzaehler pro Tag ----------
+var int sigsToday = 0
+if ta.change(dayofmonth(time_close, tz)) != 0
+    sigsToday := 0
+dailyOk = maxPerDay == 0 or sigsToday < maxPerDay
+
+// ---------- Signale ----------
+longSig  = allowLong  and inWindow and dayOk and dailyOk and vecUp   and close > pdh and guardLong
+shortSig = allowShort and inWindow and dayOk and dailyOk and vecDown and close < pdl and guardShort
+// Long hat Vorrang wie in der Strategie (beides gleichzeitig ist ohnehin unmoeglich)
+shortSig := shortSig and not longSig
+if longSig or shortSig
+    sigsToday += 1
+
+// ---------- Kerzenfaerbung ----------
+// barcolor() uebersteuert den Koerper der ECHTEN Chart-Kerzen — zuverlaessig sichtbar,
+// ohne die Original-Kerzen auszublenden. Docht/Rand bleiben Sache der Chart-
+// Einstellungen (Standard dort: gruen/rot).
+bodyCol = vecUp ? colVecUp : vecDown ? colVecDown : close >= open ? colBodyUp : colBodyDown
+barcolor(bodyCol, title = "Kerzenkoerper (Vector/Standard)")
+
+// ---------- Handelsfenster-Hintergrund ----------
+// Faerbt genau die Kerzen, in denen ein Signal entstehen koennte: Schlusszeit im
+// Fenster UND der Wochentag ist zum Handeln aktiviert.
+bgcolor(showWindow and inWindow and dayOk ? colWindow : na, title = "Handelsfenster")
+
+// ---------- PDH/PDL ----------
+plot(showPdLines ? pdh : na, "Vortageshoch (PDH)", color = color.new(#26a69a, 35), style = plot.style_linebr, linewidth = 1)
+plot(showPdLines ? pdl : na, "Vortagestief (PDL)", color = color.new(#ef5350, 35), style = plot.style_linebr, linewidth = 1)
+
+// ---------- Entry-Marker ----------
+plotshape(longSig,  title = "Long-Signal",  style = shape.triangleup,   location = location.belowbar,
+     color = colEdgeUp,   size = size.small, text = "Long")
+plotshape(shortSig, title = "Short-Signal", style = shape.triangledown, location = location.abovebar,
+     color = colEdgeDown, size = size.small, text = "Short")
+
+// ---------- Stop/Ziel-Linien ----------
+if showLevels and (longSig or shortSig)
+    bool  midwk  = wd == dayofweek.wednesday or wd == dayofweek.thursday
+    float rr     = useMidweekR and midwk ? midweekR : longSig ? rewardLong : rewardShort
+    float stopP  = open
+    float dist   = longSig ? distLong : distShort
+    float target = longSig ? close + rr * dist : close - rr * dist
+    line.new(bar_index, stopP,  bar_index + 10, stopP,  color = colEdgeDown, width = 2)
+    line.new(bar_index, target, bar_index + 10, target, color = colEdgeUp,   width = 2)
+    label.new(bar_index + 10, stopP,  "Stop",                             style = label.style_label_left, color = color.new(colEdgeDown, 80), textcolor = colEdgeDown, size = size.small)
+    label.new(bar_index + 10, target, str.tostring(rr, "#.##") + "R", style = label.style_label_left, color = color.new(colEdgeUp, 80),   textcolor = colEdgeUp,   size = size.small)
+
+// ---------- Alerts (Ausloesung "Einmal pro Kerzenschluss" waehlen!) ----------
+alertcondition(longSig,  "PDR Long",  "PrevDayRangeBreakout: LONG-Signal — Vector Candle schliesst ueber dem Vortageshoch.")
+alertcondition(shortSig, "PDR Short", "PrevDayRangeBreakout: SHORT-Signal — Vector Candle schliesst unter dem Vortagestief.")
