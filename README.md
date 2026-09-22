@@ -604,6 +604,7 @@ Sicherungen:
 | `UseVolumeFilter` / `VolumeMultiple` / `VolumeLookback` | false / 2.0 / 20 | Signalkerze braucht ≥ 200 % des Durchschnittsvolumens der 20 vorherigen Kerzen |
 | `MinBarsInsideBand` | 0 (aus) | So viele Kerzen in Folge (inkl. Signalkerze) müssen in der Fläche geschlossen haben |
 | `AtrPeriod` | 14 | 1R = ATR bei Signal |
+| `AtrMultiple` | 1.0 | 1R = Faktor × ATR — weiter Stop = kleinere Position, längere Haltedauer |
 | `InitialTargetR` | 2 | Startziel in R |
 | `UseTrailing` | **true** | R-Leiter an/aus (aus = festes Bracket 1R/Ziel) |
 | `RequirePdRange` | false | PDH/PDL-Filter |

@@ -139,6 +139,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				RequirePdRange       = false;     // Long nur > PDH, Short nur < PDL — AUS
 				// 04 Risiko
 				AtrPeriod            = 14;
+				AtrMultiple          = 1.0;       // 1R = Faktor x ATR
 				InitialTargetR       = 2.0;
 				UseTrailing          = true;      // Kern der Strategie
 				UseFixedRisk         = true;
@@ -363,7 +364,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		// Gibt true zurueck, wenn eine Order abgesetzt wurde.
 		private bool TryEnter(bool isLong)
 		{
-			double r = atr[0];
+			double r = AtrMultiple * atr[0];
 			if (r <= 0)
 				return false;
 
@@ -633,41 +634,46 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public int AtrPeriod { get; set; }
 
 		[NinjaScriptProperty]
+		[Range(0.25, 20)]
+		[Display(Name = "ATR-Faktor", Description = "1R = Faktor x ATR. Standard 1. Groesser = weiterer Stop, kleinere Position (gleiches Geldrisiko), laengere Haltedauer — Hebel gegen Sofort-Stopouts und Gebuehren-Notional.", Order = 31, GroupName = "04 Risiko")]
+		public double AtrMultiple { get; set; }
+
+		[NinjaScriptProperty]
 		[Range(0.5, 20)]
-		[Display(Name = "Start-Ziel (R)", Description = "Anfangsziel in R. Standard 2 — mit Trailing wandert es je Stufe 1R weiter.", Order = 31, GroupName = "04 Risiko")]
+		[Display(Name = "Start-Ziel (R)", Description = "Anfangsziel in R. Standard 2 — mit Trailing wandert es je Stufe 1R weiter.", Order = 32, GroupName = "04 Risiko")]
 		public double InitialTargetR { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "R-Leiter-Trailing aktiv", Description = "AN (Standard): Ab +1R (Schlusskurs) wandern Stop und Ziel je 1R mit. AUS: festes Bracket Stop 1R / Ziel wie eingestellt.", Order = 32, GroupName = "04 Risiko")]
+		[Display(Name = "R-Leiter-Trailing aktiv", Description = "AN (Standard): Ab +1R (Schlusskurs) wandern Stop und Ziel je 1R mit. AUS: festes Bracket Stop 1R / Ziel wie eingestellt.", Order = 33, GroupName = "04 Risiko")]
 		public bool UseTrailing { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Groesse aus Geldrisiko", Description = "True (Standard): Kontraktzahl so, dass ein 1R-Stopout etwa dem Betrag unten entspricht.", Order = 33, GroupName = "04 Risiko")]
+		[Display(Name = "Groesse aus Geldrisiko", Description = "True (Standard): Kontraktzahl so, dass ein 1R-Stopout etwa dem Betrag unten entspricht.", Order = 34, GroupName = "04 Risiko")]
 		public bool UseFixedRisk { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000000)]
-		[Display(Name = "Risiko je Trade", Order = 34, GroupName = "04 Risiko")]
+		[Display(Name = "Risiko je Trade", Order = 35, GroupName = "04 Risiko")]
 		public double RiskAmount { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000)]
-		[Display(Name = "Max. Kontrakte", Order = 35, GroupName = "04 Risiko")]
+		[Display(Name = "Max. Kontrakte", Order = 36, GroupName = "04 Risiko")]
 		public int MaxContracts { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 1000)]
-		[Display(Name = "Kontrakte (fest)", Description = "Nur wenn 'Groesse aus Geldrisiko' aus ist.", Order = 36, GroupName = "04 Risiko")]
+		[Display(Name = "Kontrakte (fest)", Description = "Nur wenn 'Groesse aus Geldrisiko' aus ist.", Order = 37, GroupName = "04 Risiko")]
 		public int Contracts { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(0, 1000)]
-		[Display(Name = "Mindest-Stopdistanz (Ticks)", Description = "Signale mit engerem ATR verwerfen. Standard 1 = praktisch aus.", Order = 37, GroupName = "04 Risiko")]
+		[Display(Name = "Mindest-Stopdistanz (Ticks)", Description = "Signale mit engerem ATR verwerfen. Standard 1 = praktisch aus.", Order = 38, GroupName = "04 Risiko")]
 		public int MinStopTicks { get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, 100000)]
-		[Display(Name = "Maximale Stopdistanz (Ticks)", Description = "Signale mit weiterem ATR verwerfen. Standard 10000 = praktisch aus.", Order = 38, GroupName = "04 Risiko")]
+		[Display(Name = "Maximale Stopdistanz (Ticks)", Description = "Signale mit weiterem ATR verwerfen. Standard 10000 = praktisch aus.", Order = 39, GroupName = "04 Risiko")]
 		public int MaxStopTicks { get; set; }
 
 		[NinjaScriptProperty]
