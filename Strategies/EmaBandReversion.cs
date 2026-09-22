@@ -73,6 +73,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private EMA    bandEma;
 		private StdDev bandSd;
 		private ATR    atr;
+		private SMA    volAvg;          // Durchschnittsvolumen (Volumen-Filter)
+		private int    insideCount;     // aufeinanderfolgende Schluesse INNERHALB der Flaeche
 
 		private bool   longArmed;        // Kurs schloss zuletzt OBERHALB der Flaeche
 		private bool   shortArmed;       // Kurs schloss zuletzt UNTERHALB der Flaeche
@@ -128,6 +130,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				EntryRequiresCloseInside = false; // Standard: Beruehrung (Docht) genuegt
 				UseColorFilter       = false;     // gruene Signalkerze nur Long, rote nur Short
 				UseOpenInsideBand    = false;     // Open der Signalkerze muss IN der Flaeche liegen
+				UseVolumeFilter      = false;     // Signalkerze braucht ueberdurchschnittliches Volumen
+				VolumeMultiple       = 2.0;       // 200 % des Durchschnitts ...
+				VolumeLookback       = 20;        // ... der 20 VORHERGEHENDEN Kerzen
+				MinBarsInsideBand    = 0;         // 0 = aus: so viele Schluesse in der Flaeche noetig
 				AllowLong            = true;
 				AllowShort           = true;
 				RequirePdRange       = false;     // Long nur > PDH, Short nur < PDL — AUS
@@ -152,13 +158,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 					AddDataSeries(BarsPeriodType.Day, 1);   // nur fuer den PDH/PDL-Filter
 
 				BarsRequiredToTrade = Math.Max(BarsRequiredToTrade,
-					Math.Max(BandEmaPeriod, Math.Max(BandStdDevPeriod, AtrPeriod)) + 1);
+					Math.Max(Math.Max(BandEmaPeriod, VolumeLookback),
+						Math.Max(BandStdDevPeriod, AtrPeriod)) + 1);
 			}
 			else if (State == State.DataLoaded)
 			{
 				bandEma = EMA(Close, BandEmaPeriod);
 				bandSd  = StdDev(Close, BandStdDevPeriod);
 				atr     = ATR(AtrPeriod);
+				volAvg  = SMA(Volume, VolumeLookback);
 
 				if (BarsPeriod.BarsPeriodType != BarsPeriodType.Minute || BarsPeriod.Value != 1)
 					Log(Name + ": Ausgelegt auf 1-Minuten-Kerzen (aktuell: " + BarsPeriod + ").", LogLevel.Warning);
@@ -195,6 +203,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (Open[0] > upper || Open[0] < lower)
 					return false;
 			}
+
+			// Volumen-Filter: Signalkerze braucht mindestens VolumeMultiple x den
+			// Durchschnitt der VORHERGEHENDEN Kerzen (volAvg[1] — die Signalkerze
+			// zaehlt nicht in ihre eigene Messlatte).
+			if (UseVolumeFilter)
+			{
+				if (volAvg == null || CurrentBars[0] < VolumeLookback + 1)
+					return false;
+				double avg = volAvg[1];
+				if (avg <= 0 || Volume[0] < VolumeMultiple * avg)
+					return false;
+			}
+
+			// Mindestanzahl Kerzen in der Flaeche (inkl. Signalkerze). Hinweis: ab 1
+			// muss die Signalkerze IN der Flaeche schliessen — im Beruehrungs-Modus
+			// fallen damit Kerzen weg, die nur den Docht hineinstrecken.
+			if (MinBarsInsideBand > 0 && insideCount < MinBarsInsideBand)
+				return false;
 
 			return true;
 		}
@@ -244,6 +270,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			double upper = bandEma[0] + BandStdDevMultiple * bandSd[0];
 			double lower = bandEma[0] - BandStdDevMultiple * bandSd[0];
+
+			// Zaehler: wie viele Kerzen in Folge (inkl. der aktuellen) IN der Flaeche schliessen
+			insideCount = (Close[0] <= upper && Close[0] >= lower) ? insideCount + 1 : 0;
 
 			// ---------- R-Leiter fuer die laufende Position ----------
 			if (Position.MarketPosition != MarketPosition.Flat)
@@ -566,6 +595,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Open in der Flaeche noetig", Description = "AN: Die Signalkerze muss bereits INNERHALB der Flaeche eroeffnet haben. Standard AUS.", Order = 28, GroupName = "03 Einstieg")]
 		public bool UseOpenInsideBand { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Volumen-Filter", Description = "AN: Die Signalkerze braucht mindestens das eingestellte Vielfache des Durchschnittsvolumens der vorhergehenden Kerzen. Standard AUS.", Order = 29, GroupName = "03 Einstieg")]
+		public bool UseVolumeFilter { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(1.0, 20)]
+		[Display(Name = "Volumen: Faktor", Description = "Vielfaches des Durchschnittsvolumens. 2,0 = 200 Prozent (Standard).", Order = 30, GroupName = "03 Einstieg")]
+		public double VolumeMultiple { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(2, 500)]
+		[Display(Name = "Volumen: Durchschnitt ueber", Description = "Ueber wie viele VORHERGEHENDE Kerzen der Volumendurchschnitt gebildet wird. Standard 20.", Order = 31, GroupName = "03 Einstieg")]
+		public int VolumeLookback { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(0, 100)]
+		[Display(Name = "Min. Kerzen in der Flaeche", Description = "0 = aus (Standard). Sonst: so viele Kerzen in Folge (inkl. Signalkerze) muessen IN der Flaeche geschlossen haben, bevor eingestiegen wird.", Order = 32, GroupName = "03 Einstieg")]
+		public int MinBarsInsideBand { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Long erlauben",  Order = 24, GroupName = "03 Einstieg")]

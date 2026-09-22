@@ -601,6 +601,8 @@ Sicherungen:
 | `EntryRequiresCloseInside` | false | Berührung genügt (Standard) vs. Schluss in der Fläche |
 | `UseColorFilter` | false | Grüne Signalkerze → nur Long, rote → nur Short |
 | `UseOpenInsideBand` | false | Signalkerze muss innerhalb der Fläche eröffnet haben |
+| `UseVolumeFilter` / `VolumeMultiple` / `VolumeLookback` | false / 2.0 / 20 | Signalkerze braucht ≥ 200 % des Durchschnittsvolumens der 20 vorherigen Kerzen |
+| `MinBarsInsideBand` | 0 (aus) | So viele Kerzen in Folge (inkl. Signalkerze) müssen in der Fläche geschlossen haben |
 | `AtrPeriod` | 14 | 1R = ATR bei Signal |
 | `InitialTargetR` | 2 | Startziel in R |
 | `UseTrailing` | **true** | R-Leiter an/aus (aus = festes Bracket 1R/Ziel) |
