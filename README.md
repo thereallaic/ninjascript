@@ -15,6 +15,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `PineScript/PrevDayRangeBreakout.pine` | PDR Signale (TradingView) | Pine-v6-Indikator: gleiche Einstiegsbedingungen als Chart-Signale inkl. Vector-Candle-Färbung |
 | `Strategies/EmaBandReversion.cs` | EmaBandReversion | Rückkehr in die EMA50-Fläche (EMA ± 2 StdAbw, 1-min), Stop = 1 ATR, R-Leiter-Trailing ab +1R |
 | `Strategies/PrevDayRangeDelta.cs` | PrevDayRangeDelta | Wie PrevDayRangeBreakout, aber Auslöser = Delta-Kerze (Netto-Aggressorvolumen per Tick-Rule) statt Vector Candle |
+| `Strategies/MagnetZones.cs` | MagnetZones | Ziel-Magneten (unrecovered Vector-Zonen, ungetestete PDH/PDL) + Delta-Brodel-Trigger aus Kompression; Ziel = Magnet, Einstieg nur ab Mindest-RR |
 | `Strategies/TimedLong.cs` | TimedLong | **Benchmark ohne Signal:** täglich um 16:00 long, Ausstieg 22:00. Messlatte für alle übrigen Strategien |
 
 ---
@@ -575,6 +576,22 @@ Sicherungen:
 `UseMidweekReward = true` lässt Mi/Do mit `MidweekRewardMultiple` (Standard 2) statt des normalen R-Ziels handeln — gedacht als Experiment, um die schwachen Mitte-der-Woche-Tage zu retten.
 
 **Standard ist AUS, und zwar mit Grund:** Die MFE-Rekonstruktion über den Backtest 2020–2026 (MNQ, 5-min) zeigt, dass ein niedrigeres Ziel Mi/Do *schlechter* macht, nicht besser (2R ≈ −7.500 $ vs. 3R ≈ −5.600 $ auf Mi/Do). Die Mi/Do-Verlierer laufen kaum je ins Plus (nur 5 % erreichen 2R MFE), ein kleineres Ziel kostet also vor allem die vollen 3R-Gewinner. Sind Mittwoch und Donnerstag ohnehin abgeschaltet, ist der Schalter wirkungslos — die Strategie loggt dann eine Warnung.
+
+---
+
+## MagnetZones — Ziel-Magneten + Brodel-Trigger
+
+**Erst das Ziel, dann der Weg**: Die Strategie führt Magneten (Zonen, zu denen der Preis gezogen wird) und steigt ein, wenn Delta-Druck („Brodeln") in Richtung eines ausreichend weit entfernten Magneten entsteht. **Das Ziel der Position ist der Magnet** — das R-Verhältnis entsteht aus der Distanz.
+
+**Magneten:**
+- **Unrecovered Vector-Zonen** auf höherem Timeframe (Standard 15-min): Kerze mit Volumen ≥ 2× Durchschnitt **und** Körper ≥ 1,5× ATR → Körper wird Zone. Verfällt bei Füllung ≥ `RecoverPct` (50 %) oder optional nach `ZoneMaxAgeBars`.
+- **Ungetestete Vortageslevel** (`UsePdTargets`): PDH/PDL, solange heute unberührt.
+
+**Brodeln (Trigger auf der Chartserie, empfohlen 5-min):** Delta je Kerze per Tick-Rule (1-Tick-Serie); Signal, wenn die Delta-Summe der letzten `DeltaWindow` (5) Kerzen ≥ `DeltaSumMultiple` (2) × Durchschnitts-|Delta| in Zielrichtung liegt — **und** (Standard an) der Markt vorher komprimiert war (ATR < 0,85 × langer ATR-Schnitt).
+
+**Geometrie:** TP = Magnetkante − Puffer; Stop = Close ± 1,5× ATR; **Einstieg nur wenn RR ≥ `MinRR` (2)** und optional Stop ≥ `MinStopPct` vom Preis (Gebühren-Schutz für Perps, z. B. 0,3). Stop/Ziel bleiben absolut stehen — kein Trailing in v1.
+
+Benötigt 1-Tick-Daten (Delta) → Backtests langsamer. Serien: Chart = Trigger, +15-min (Zonen), +Tag (PDH/PDL), +1-Tick (Delta).
 
 ---
 
