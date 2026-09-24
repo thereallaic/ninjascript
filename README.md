@@ -14,6 +14,7 @@ Repo für NinjaScript-Strategien, die im NinjaTrader 8.1 Strategy Analyzer gebac
 | `Strategies/PrevDayRangeBreakout.cs` | PrevDayRangeBreakout | Vector Candle über dem Vortageshoch / unter dem Vortagestief, 15:30–17:00, Stop am Open der Signalkerze, 3R-Ziel |
 | `PineScript/PrevDayRangeBreakout.pine` | PDR Signale (TradingView) | Pine-v6-Indikator: gleiche Einstiegsbedingungen als Chart-Signale inkl. Vector-Candle-Färbung |
 | `Strategies/EmaBandReversion.cs` | EmaBandReversion | Rückkehr in die EMA50-Fläche (EMA ± 2 StdAbw, 1-min), Stop = 1 ATR, R-Leiter-Trailing ab +1R |
+| `Strategies/PrevDayRangeDelta.cs` | PrevDayRangeDelta | Wie PrevDayRangeBreakout, aber Auslöser = Delta-Kerze (Netto-Aggressorvolumen per Tick-Rule) statt Vector Candle |
 | `Strategies/TimedLong.cs` | TimedLong | **Benchmark ohne Signal:** täglich um 16:00 long, Ausstieg 22:00. Messlatte für alle übrigen Strategien |
 
 ---
@@ -574,6 +575,21 @@ Sicherungen:
 `UseMidweekReward = true` lässt Mi/Do mit `MidweekRewardMultiple` (Standard 2) statt des normalen R-Ziels handeln — gedacht als Experiment, um die schwachen Mitte-der-Woche-Tage zu retten.
 
 **Standard ist AUS, und zwar mit Grund:** Die MFE-Rekonstruktion über den Backtest 2020–2026 (MNQ, 5-min) zeigt, dass ein niedrigeres Ziel Mi/Do *schlechter* macht, nicht besser (2R ≈ −7.500 $ vs. 3R ≈ −5.600 $ auf Mi/Do). Die Mi/Do-Verlierer laufen kaum je ins Plus (nur 5 % erreichen 2R MFE), ein kleineres Ziel kostet also vor allem die vollen 3R-Gewinner. Sind Mittwoch und Donnerstag ohnehin abgeschaltet, ist der Schalter wirkungslos — die Strategie loggt dann eine Warnung.
+
+---
+
+## PrevDayRangeDelta — Orderflow-Variante des Vortagesrange-Ausbruchs
+
+Identisches Regelwerk wie `PrevDayRangeBreakout` (Fenster 15:30–17:00, Long über PDH / Short unter PDL, Stop am Open der Signalkerze, R-Ziele Long/Short getrennt, Break-Even-Option, Signal-Bridge) — **nur der Auslöser ist ersetzt**: statt Vector Candle (Volumen + Farbe) eine **Delta-Kerze**.
+
+**Delta** = Netto-Aggressorvolumen der Kerze, berechnet per **Tick-Rule** aus einer automatisch hinzugefügten 1-Tick-Serie: Uptick = Käufervolumen, Downtick = Verkäufervolumen, unverändert = Richtung des Vorticks. Funktioniert historisch **ohne Order Flow+ und ohne Tick Replay**, ist aber eine Näherung (keine Bid/Ask-Stempel) und braucht 1-Tick-Daten → Backtests deutlich langsamer.
+
+Bedingungen an die Signalkerze:
+1. Delta zeigt in Handelsrichtung (Long: > 0, Short: < 0) — **ersetzt die Farb-Bedingung**
+2. |Delta| ≥ `DeltaMultiple` (2,0) × Durchschnitts-|Delta| der `DeltaLookback` (20) vorherigen Kerzen
+3. Optional `MinDeltaRatio` (0 = aus): |Delta|/Volumen ≥ Schwelle (0,3 = 30 % Netto-Aggression)
+
+Zusätzlich gegenüber PDR: Samstag/Sonntag-Schalter für Krypto-Märkte. Direkter A/B-Vergleich: gleiche Einstellungen wie PDR fahren und nur Vector- gegen Delta-Auslöser tauschen.
 
 ---
 
